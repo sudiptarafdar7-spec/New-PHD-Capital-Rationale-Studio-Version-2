@@ -36,7 +36,11 @@ One-line installer for `new.researchrationale.in` — see [DEPLOYMENT.md](./DEPL
 curl -fsSL https://raw.githubusercontent.com/sudiptarafdar7-spec/New-PHD-Capital-Rationale-Studio-Version-2/main/deploy.sh | sudo bash
 ```
 
-Re-running the same command upgrades the existing install (data preserved).
+For subsequent updates (after first install), use the faster `update.sh`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sudiptarafdar7-spec/New-PHD-Capital-Rationale-Studio-Version-2/main/update.sh | sudo bash
+```
 
 ---
 

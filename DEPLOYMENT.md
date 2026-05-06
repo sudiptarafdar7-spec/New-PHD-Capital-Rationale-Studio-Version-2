@@ -44,6 +44,14 @@ That single command auto-detects whether this is a **fresh install** or an
 **Re-run the same command** any time to deploy updates — your data, env,
 SSL cert, and uploaded files are preserved.
 
+> **Faster updates** (after the first install): use `update.sh` instead of
+> re-running the full installer. It skips system packages and only pulls code,
+> rebuilds the frontend, syncs DB schema, and restarts the service (~30 sec):
+>
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/sudiptarafdar7-spec/New-PHD-Capital-Rationale-Studio-Version-2/main/update.sh | sudo bash
+> ```
+
 ---
 
 ## 3.  First-time login
