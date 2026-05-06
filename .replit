@@ -1,0 +1,88 @@
+modules = ["python-3.11", "nodejs-20", "web", "bash", "postgresql-16"]
+[agent]
+expertMode = true
+integrations = ["python_database:1.0.0"]
+stack = "BEST_EFFORT_FALLBACK"
+
+[nix]
+channel = "stable-25_05"
+packages = ["c-ares", "cacert", "cairo", "cargo", "chromedriver", "ffmpeg-full", "freetype", "ghostscript", "glibcLocales", "gobject-introspection", "grpc", "gtk3", "lcms2", "libcxx", "libffi", "libiconv", "libimagequant", "libjpeg", "libtiff", "libwebp", "libxcrypt", "openjpeg", "openssl", "pkg-config", "qhull", "rapidfuzz-cpp", "rustc", "taskflow", "tcl", "tk", "unzip", "yt-dlp", "zlib"]
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Server"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Frontend"
+
+[[workflows.workflow]]
+name = "Server"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python3.11 -m backend.app"
+waitForPort = 8000
+
+[[workflows.workflow]]
+name = "Frontend"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm run dev"
+waitForPort = 5000
+
+[workflows.workflow.metadata]
+outputType = "webview"
+
+[[ports]]
+localPort = 5000
+externalPort = 80
+
+[[ports]]
+localPort = 5001
+externalPort = 3003
+
+[[ports]]
+localPort = 5002
+externalPort = 5173
+
+[[ports]]
+localPort = 8000
+externalPort = 8000
+
+[deployment]
+deploymentTarget = "cloudrun"
+run = [
+  "gunicorn",
+  "--bind",
+  "0.0.0.0:5000",
+  "--workers",
+  "2",
+  "--timeout",
+  "120",
+  "backend.app:create_app()",
+]
+build = ["npm", "run", "build"]
+
+[userenv]
+
+[userenv.shared]
+TZ = "Asia/Kolkata"
+
+[postMerge]
+path = "scripts/post-merge.sh"
+timeoutMs = 180000

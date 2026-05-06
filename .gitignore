@@ -1,0 +1,78 @@
+# =============================================================================
+#  PHD Capital Rationale Studio — .gitignore
+#  Keep the repo to source code + configs only.
+#  Job data, model binaries, secrets, and per-environment caches stay LOCAL.
+# =============================================================================
+
+# ── Node / frontend ──────────────────────────────────────────────────────────
+node_modules/
+package-lock.json
+build/
+dist/
+.vite/
+.cache/
+
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+backend/venv/
+*.egg-info/
+.pytest_cache/
+*.pyc
+.pythonlibs/
+.upm/
+uv.lock
+
+# ── Environment & secrets (NEVER commit) ─────────────────────────────────────
+.env
+.env.*
+!.env.production.template
+/etc/phd-capital.env
+
+# ── Per-job runtime data (audio, transcripts, charts, PDFs) ──────────────────
+backend/job_files/
+backend/generated_charts/
+backend/uploaded_files/
+backend/channel_logos/
+backend/api_keys/
+backend/youtube_cookies.txt
+
+# ── Speech / ML model binaries (auto-downloaded on first use) ────────────────
+backend/models/vosk/
+
+# ── DB migrations (deploy.sh + init_database handle schema; not for git) ─────
+backend/migrations/
+
+# ── Replit workspace internals (NOT for GitHub) ──────────────────────────────
+.local/
+.config/
+.replit_*
+.breakpoints
+
+# ── Editor / OS noise ────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── Misc ─────────────────────────────────────────────────────────────────────
+*.tmp
+*.temp
+attached_assets/
+*.pid
+*.sock
