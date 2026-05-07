@@ -429,12 +429,27 @@ def save_job(job_id):
             
             if existing:
                 return jsonify({'error': 'Job already saved'}), 400
-            
-            pdf_path = os.path.join(job['folder_path'], 'pdf', 'bulk_rationale.pdf')
-            
-            if not os.path.exists(pdf_path):
+
+            # Resolve the actual PDF on disk (filename varies — e.g.
+            # "PHD_Capital-23-12-2025.pdf"). Mirror the dynamic scan used by
+            # GET /jobs/<id> so we never miss it because of a hard-coded name.
+            resolved_folder = resolve_job_folder_path(job['folder_path'])
+            pdf_folder = os.path.join(resolved_folder, 'pdf')
+            pdf_abs_path = None
+            if os.path.exists(pdf_folder):
+                pdf_files = [f for f in os.listdir(pdf_folder)
+                             if f.endswith('.pdf') and not f.startswith('bulk_rationale_signed')]
+                if pdf_files:
+                    pdf_abs_path = os.path.join(pdf_folder, pdf_files[0])
+
+            if not pdf_abs_path or not os.path.exists(pdf_abs_path):
                 return jsonify({'error': 'PDF file not found'}), 404
-            
+
+            # Store a workspace-relative path so the saved-rationale download
+            # endpoint (which prepends workspace_root) can serve it cross-env.
+            pdf_filename = os.path.basename(pdf_abs_path)
+            pdf_rel_path = os.path.join('backend', 'job_files', job_id, 'pdf', pdf_filename)
+
             cursor.execute("""
                 INSERT INTO saved_rationale (
                     job_id, tool_used, channel_id, title, date, youtube_url,
@@ -444,7 +459,7 @@ def save_job(job_id):
                 RETURNING id
             """, (
                 job_id, 'Bulk Rationale', job['channel_id'], job['title'],
-                job['date'], job['youtube_url'], pdf_path, 'Unsigned',
+                job['date'], job['youtube_url'], pdf_rel_path, 'Unsigned',
                 datetime.now(), datetime.now()
             ))
             
@@ -462,7 +477,24 @@ def save_job(job_id):
                 job_id,
                 'Bulk Rationale'
             )
-        
+
+        # If this job is linked to a Media Presence entry, refresh that
+        # row so the dashboard immediately shows the unsigned PDF.
+        try:
+            from backend.api.media_presence import _sync_from_job
+            with get_db_cursor() as cur:
+                cur.execute(
+                    "SELECT id FROM media_presence WHERE rationale_job_id = %s",
+                    (job_id,),
+                )
+                for mp_row in cur.fetchall():
+                    try:
+                        _sync_from_job(mp_row['id'])
+                    except Exception as sync_err:
+                        print(f"[bulk_rationale.save] mp sync failed for {mp_row['id']}: {sync_err}")
+        except Exception as link_err:
+            print(f"[bulk_rationale.save] mp link lookup failed: {link_err}")
+
         return jsonify({
             'success': True,
             'rationaleId': rationale_id,
@@ -549,28 +581,53 @@ def upload_signed_pdf(job_id):
             
             if not job['rationale_id']:
                 return jsonify({'error': 'Please save the job first'}), 400
-            
-            signed_filename = f'bulk_rationale_signed.pdf'
-            signed_path = os.path.join(job['folder_path'], 'pdf', signed_filename)
-            
-            file.save(signed_path)
-            
+
+            # Save signed PDF on the resolved (absolute) folder, but record
+            # a workspace-relative path so download endpoints can find it
+            # consistently across dev/prod environments.
+            resolved_folder = resolve_job_folder_path(job['folder_path'])
+            pdf_folder = os.path.join(resolved_folder, 'pdf')
+            os.makedirs(pdf_folder, exist_ok=True)
+
+            signed_filename = 'bulk_rationale_signed.pdf'
+            signed_abs_path = os.path.join(pdf_folder, signed_filename)
+            file.save(signed_abs_path)
+
+            signed_rel_path = os.path.join('backend', 'job_files', job_id, 'pdf', signed_filename)
+
             cursor.execute("""
                 UPDATE saved_rationale
                 SET signed_pdf_path = %s, sign_status = 'Signed', 
                     signed_uploaded_at = %s, updated_at = %s
                 WHERE job_id = %s
-            """, (signed_path, datetime.now(), datetime.now(), job_id))
-            
+            """, (signed_rel_path, datetime.now(), datetime.now(), job_id))
+
             cursor.execute("""
                 UPDATE jobs SET status = 'signed', updated_at = %s
                 WHERE id = %s
             """, (datetime.now(), job_id))
-        
+
+        # Refresh any linked Media Presence row so it surfaces the
+        # newly-uploaded signed PDF alongside the unsigned one.
+        try:
+            from backend.api.media_presence import _sync_from_job
+            with get_db_cursor() as cur:
+                cur.execute(
+                    "SELECT id FROM media_presence WHERE rationale_job_id = %s",
+                    (job_id,),
+                )
+                for mp_row in cur.fetchall():
+                    try:
+                        _sync_from_job(mp_row['id'])
+                    except Exception as sync_err:
+                        print(f"[bulk_rationale.upload_signed] mp sync failed for {mp_row['id']}: {sync_err}")
+        except Exception as link_err:
+            print(f"[bulk_rationale.upload_signed] mp link lookup failed: {link_err}")
+
         return jsonify({
             'success': True,
             'message': 'Signed PDF uploaded successfully',
-            'signedPath': signed_path
+            'signedPath': signed_rel_path
         }), 200
         
     except Exception as e:

@@ -21,9 +21,11 @@ class MediaPresence:
     def list_all(limit=200, offset=0, transcribe_status=None, rationale_status=None,
                  created_by=None):
         sql = """
-            SELECT mp.*, c.channel_name, c.channel_logo_path
+            SELECT mp.*, c.channel_name, c.channel_logo_path,
+                   sr.unsigned_pdf_path, sr.signed_pdf_path, sr.sign_status
             FROM media_presence mp
             LEFT JOIN channels c ON mp.channel_id = c.id
+            LEFT JOIN saved_rationale sr ON sr.job_id = mp.rationale_job_id
             WHERE 1=1
         """
         params = []
@@ -49,9 +51,11 @@ class MediaPresence:
         with get_db_cursor() as cursor:
             cursor.execute(
                 """
-                SELECT mp.*, c.channel_name, c.channel_logo_path
+                SELECT mp.*, c.channel_name, c.channel_logo_path,
+                       sr.unsigned_pdf_path, sr.signed_pdf_path, sr.sign_status
                 FROM media_presence mp
                 LEFT JOIN channels c ON mp.channel_id = c.id
+                LEFT JOIN saved_rationale sr ON sr.job_id = mp.rationale_job_id
                 WHERE mp.id = %s
                 """,
                 (media_id,),

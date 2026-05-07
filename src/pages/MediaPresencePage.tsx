@@ -40,6 +40,9 @@ interface MediaPresenceItem {
   rationale_job_id: string | null;
   linked_transcribe_job_id?: string | null;
   output_pdf_path: string | null;
+  unsigned_pdf_path?: string | null;
+  signed_pdf_path?: string | null;
+  sign_status?: string | null;
   notes?: string | null;
 }
 
@@ -975,10 +978,36 @@ export default function MediaPresencePage({ onNavigate }: Props) {
                         )}
                       </td>
                       <td className="py-4 px-3">
-                        {item.output_pdf_path ? (
-                          <Button size="sm" variant="outline" onClick={() => downloadPdf(item)} className="h-8">
-                            <Download className="w-3 h-3 mr-1" /> PDF
-                          </Button>
+                        {(item.unsigned_pdf_path || item.signed_pdf_path || item.output_pdf_path) ? (
+                          <div className="flex flex-col gap-1.5">
+                            {item.unsigned_pdf_path && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => downloadPdf({ ...item, output_pdf_path: item.unsigned_pdf_path! })}
+                                className="h-7 px-2 text-[11px] justify-start"
+                                title="Download unsigned PDF"
+                              >
+                                <Download className="w-3 h-3 mr-1" /> Unsigned
+                              </Button>
+                            )}
+                            {item.signed_pdf_path && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => downloadPdf({ ...item, output_pdf_path: item.signed_pdf_path! })}
+                                className="h-7 px-2 text-[11px] justify-start border-emerald-500/40 text-emerald-600 hover:bg-emerald-50"
+                                title="Download signed PDF"
+                              >
+                                <Download className="w-3 h-3 mr-1" /> Signed
+                              </Button>
+                            )}
+                            {!item.unsigned_pdf_path && !item.signed_pdf_path && item.output_pdf_path && (
+                              <Button size="sm" variant="outline" onClick={() => downloadPdf(item)} className="h-7 px-2 text-[11px] justify-start">
+                                <Download className="w-3 h-3 mr-1" /> PDF
+                              </Button>
+                            )}
+                          </div>
                         ) : (
                           <span className="text-muted-foreground text-xs">—</span>
                         )}
