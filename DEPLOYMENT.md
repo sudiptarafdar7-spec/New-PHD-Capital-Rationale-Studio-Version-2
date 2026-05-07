@@ -30,16 +30,15 @@ That single command auto-detects whether this is a **fresh install** or an
 
 | Step | Fresh install                                              | Upgrade                          |
 |------|------------------------------------------------------------|----------------------------------|
-| 1    | Install system packages (Python 3.11, Node 20, PostgreSQL, Nginx, ffmpeg, certbot) | skipped |
+| 1    | Install system packages (Python 3.11, Node 20, PostgreSQL, Nginx, ffmpeg, unzip, certbot) | skipped |
 | 2    | Create OS user `phdnew`                                    | skipped                          |
 | 3    | Create database `phd_new_db` + user `phd_new_user`         | skipped                          |
 | 4    | Write `/etc/phd-new.env` with auto-generated secrets       | skipped (your env stays)         |
 | 5    | Clone repo to `/var/www/new-rationale-studio`              | `git pull`                       |
-| 6    | Install pip + npm deps, `vite build` the frontend          | same                             |
-| 7    | Create all DB tables + seed default **admin user**         | only re-run schema (idempotent)  |
-| 8    | Install `phd-new.service` systemd unit on port `8100`      | restart it                       |
-| 9    | Install Nginx vhost for `new.researchrationale.in`         | same                             |
-| 10   | Get SSL cert via Let's Encrypt + auto-renew                | skipped if cert exists           |
+| 6    | Install pip + npm deps (`npm install`), `vite build`       | same                             |
+| 7    | Pre-fetch Vosk Hindi model (~1.5 GB, one-time)             | skipped if `.complete` marker exists |
+| 8    | Create all DB tables + seed default **admin user**         | only re-run schema (idempotent)  |
+| 9    | Install systemd unit, Nginx vhost, SSL cert                | restart service only             |
 
 **Re-run the same command** any time to deploy updates — your data, env,
 SSL cert, and uploaded files are preserved.
@@ -90,7 +89,73 @@ ADMIN_EMAIL="you@example.com" ADMIN_PASSWORD="MyStrongPass!" \
 
 ---
 
-## 5.  Common ops
+## 5.  Clean wipe — delete a broken / half-installed instance
+
+Run these on the VPS as `root` to completely remove everything and start fresh.
+They are safe to run even if the install never finished.
+
+```bash
+# ── 1. Stop & disable the service ────────────────────────────────────────────
+systemctl stop    phd-new  2>/dev/null || true
+systemctl disable phd-new  2>/dev/null || true
+rm -f /etc/systemd/system/phd-new.service
+systemctl daemon-reload
+
+# ── 2. Remove Nginx vhost ─────────────────────────────────────────────────────
+rm -f /etc/nginx/sites-enabled/phd-new.conf
+rm -f /etc/nginx/sites-available/phd-new.conf
+nginx -t && systemctl reload nginx
+
+# ── 3. Delete app directory (code, venv, built frontend, Vosk model) ─────────
+rm -rf /var/www/new-rationale-studio
+
+# ── 4. Delete env file ────────────────────────────────────────────────────────
+rm -f /etc/phd-new.env
+
+# ── 5. Delete log files ───────────────────────────────────────────────────────
+rm -f /var/log/phd-new.log /var/log/phd-new.err.log
+
+# ── 6. Remove OS user (optional) ─────────────────────────────────────────────
+userdel -r phdnew 2>/dev/null || true
+
+# ── 7. Drop PostgreSQL DB + user (⚠ THIS DELETES ALL DATA — skip to keep data)
+sudo -u postgres psql -c "DROP DATABASE IF EXISTS phd_new_db;"
+sudo -u postgres psql -c "DROP ROLE     IF EXISTS phd_new_user;"
+```
+
+> **Keeping your data?** Skip step 7. When you re-run `deploy.sh` it will
+> detect the existing DB and reuse it — all jobs, users, and uploads are preserved.
+
+After the wipe, re-run the one-line installer from scratch:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sudiptarafdar7-spec/New-PHD-Capital-Rationale-Studio-Version-2/main/deploy.sh | sudo bash
+```
+
+---
+
+## 5b.  Recovery — fix a failed update without wiping
+
+If `update.sh` failed mid-way (e.g. `npm ci` EUSAGE, pip error, etc.), the
+most reliable recovery is a manual pull-then-run so bash loads the freshest
+version of the script:
+
+```bash
+# Pull latest code first (gets any script fixes committed since last run)
+cd /var/www/new-rationale-studio
+sudo -u phdnew git fetch --all --prune
+sudo -u phdnew git reset --hard origin/main
+
+# Now run the freshly-pulled update script
+sudo bash /var/www/new-rationale-studio/update.sh
+```
+
+This avoids the chicken-and-egg problem where `update.sh` loads itself into
+memory before the `git pull` step updates it on disk.
+
+---
+
+## 6.  Common ops
 
 ```bash
 # Live logs
