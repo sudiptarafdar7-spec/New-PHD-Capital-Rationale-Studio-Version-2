@@ -17,6 +17,7 @@ import {
 import type { Job, DashboardStats } from '../types';
 import { formatIST } from '../lib/datetime';
 import JobTitle from '../components/JobTitle';
+import { toast } from 'sonner';
 
 interface DashboardPageProps {
   onNavigate: (page: string, jobId?: string) => void;
@@ -38,6 +39,7 @@ export default function DashboardPage({ onNavigate }: DashboardPageProps) {
   const [calendarMonth, setCalendarMonth] = useState<Date>(new Date());
   const [jobs, setJobs] = useState<Job[]>([]);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [signingId, setSigningId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [totalJobs, setTotalJobs] = useState(0);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
@@ -389,6 +391,48 @@ export default function DashboardPage({ onNavigate }: DashboardPageProps) {
     } finally {
       setDownloadingId(null);
     }
+  };
+
+  // Inline upload of a signed PDF directly from the Jobs list. Uses the
+  // unified saved-rationale endpoint, which works for any tool that has a
+  // saved rationale row (Bulk / Media / Premium / Manual).
+  const handleUploadSignedInline = (jobId: string) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'application/pdf';
+    input.onchange = async (e: Event) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+      try {
+        setSigningId(jobId);
+        const token = localStorage.getItem('token');
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('jobId', jobId);
+        const response = await fetch('/api/v1/saved-rationale/upload-signed', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` },
+          body: formData,
+        });
+        if (response.ok) {
+          toast.success('Signed PDF uploaded — job marked as Signed');
+          fetchDashboardData();
+        } else {
+          let detail = '';
+          try {
+            const data = await response.json();
+            detail = data?.error || data?.message || '';
+          } catch { /* ignore */ }
+          toast.error(detail || `Failed to upload signed PDF (HTTP ${response.status})`);
+        }
+      } catch (err) {
+        console.error('Error uploading signed PDF:', err);
+        toast.error('Error uploading signed PDF');
+      } finally {
+        setSigningId(null);
+      }
+    };
+    input.click();
   };
 
   return (
@@ -994,12 +1038,16 @@ export default function DashboardPage({ onNavigate }: DashboardPageProps) {
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => handleViewDetails(job.id, job.tool_used)}
-                          data-tour={`job-view-${job.id}`}
-                          className="border-green-500/50 text-green-500 hover:bg-green-500 hover:text-white hover:border-green-500 active:scale-95 transition-all duration-200 hover:shadow-lg flex-1 sm:flex-initial lg:min-w-[140px] h-9"
+                          onClick={() => handleUploadSignedInline(job.id)}
+                          disabled={signingId === job.id}
+                          className="border-green-500/50 text-green-500 hover:bg-green-500 hover:text-white hover:border-green-500 active:scale-95 transition-all duration-200 hover:shadow-lg flex-1 sm:flex-initial lg:min-w-[140px] h-9 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                          <FileSignature className="w-4 h-4 mr-1.5" />
-                          <span className="hidden sm:inline">Sign Now</span>
+                          {signingId === job.id ? (
+                            <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                          ) : (
+                            <FileSignature className="w-4 h-4 mr-1.5" />
+                          )}
+                          <span className="hidden sm:inline">Upload Signed</span>
                           <span className="sm:hidden">Sign</span>
                         </Button>
                       </>

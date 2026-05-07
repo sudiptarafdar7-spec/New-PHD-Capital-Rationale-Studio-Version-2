@@ -120,8 +120,10 @@ export default function SavedRationalePage({ onNavigate }: SavedRationalePagePro
           setUploadingId(jobId);
           const token = localStorage.getItem('token');
           const formData = new FormData();
-          formData.append('signed_pdf', file);
-          formData.append('job_id', jobId);
+          // Backend expects field names "file" and "jobId" (see
+          // backend/api/saved_rationale.py:upload_signed_pdf).
+          formData.append('file', file);
+          formData.append('jobId', jobId);
 
           const response = await fetch('/api/v1/saved-rationale/upload-signed', {
             method: 'POST',
@@ -138,7 +140,13 @@ export default function SavedRationalePage({ onNavigate }: SavedRationalePagePro
             // Refresh the list to show updated status
             fetchRationales();
           } else {
-            toast.error('Failed to upload signed PDF');
+            // Surface the backend error reason so the user can act on it.
+            let detail = '';
+            try {
+              const data = await response.json();
+              detail = data?.error || data?.message || '';
+            } catch { /* ignore */ }
+            toast.error(detail || `Failed to upload signed PDF (HTTP ${response.status})`);
           }
         } catch (error) {
           console.error('Error uploading signed PDF:', error);
