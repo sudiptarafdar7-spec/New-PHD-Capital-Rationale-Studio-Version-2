@@ -220,8 +220,8 @@ export default function Sidebar({ isOpen, onClose, currentPage, onNavigate, isCo
         )}>
           {!isCollapsed && (
             <div className="flex items-center gap-3 w-full">
-              <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-lg p-2 shrink-0">
-                <img src={logoSrc} alt="Company logo" className="h-6 w-auto object-contain" />
+              <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-lg p-1.5 shrink-0 flex items-center justify-center h-11 w-11">
+                <img src={logoSrc} alt="Company logo" className="max-h-full max-w-full object-contain" />
               </div>
               <div className="lg:block hidden min-w-0">
                 <h2 className="text-foreground font-medium text-sm truncate">Rationale Studio</h2>
@@ -230,8 +230,8 @@ export default function Sidebar({ isOpen, onClose, currentPage, onNavigate, isCo
           )}
           
           {isCollapsed && (
-            <div className="lg:flex hidden bg-gradient-to-br from-slate-900 to-slate-800 rounded-lg p-2">
-              <img src={logoSrc} alt="Company logo" className="h-6 w-auto object-contain" />
+            <div className="lg:flex hidden bg-gradient-to-br from-slate-900 to-slate-800 rounded-lg p-1.5 items-center justify-center h-11 w-11">
+              <img src={logoSrc} alt="Company logo" className="max-h-full max-w-full object-contain" />
             </div>
           )}
 
