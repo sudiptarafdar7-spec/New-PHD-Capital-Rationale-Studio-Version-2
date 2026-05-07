@@ -339,6 +339,16 @@ def upload_signed_pdf():
                 SET status = 'signed', updated_at = %s
                 WHERE id = %s
             """, (datetime.now(), job_id))
+
+            # Stamp linked Media Presence row directly (don't rely on the
+            # opportunistic list_entries sync, which skips already-'done' rows).
+            cursor.execute("""
+                UPDATE media_presence
+                SET rationale_status = 'signed',
+                    output_pdf_path = %s,
+                    updated_at = %s
+                WHERE rationale_job_id = %s
+            """, (relative_signed_path, datetime.now(), job_id))
             
             # Create activity log
             create_activity_log(

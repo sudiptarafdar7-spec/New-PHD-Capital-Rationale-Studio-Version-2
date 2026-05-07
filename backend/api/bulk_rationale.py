@@ -391,6 +391,14 @@ def delete_job(job_id):
                 import shutil
                 shutil.rmtree(job['folder_path'], ignore_errors=True)
         
+        # Reset any Media Presence row that pointed to this rationale job so
+        # the user can restart the rationale step from MP.
+        try:
+            from backend.api.media_presence import unlink_deleted_job
+            unlink_deleted_job(job_id)
+        except Exception as _mp_err:
+            print(f"[bulk_rationale.delete_job] MP unlink failed: {_mp_err}")
+        
         return jsonify({
             'success': True,
             'message': 'Job deleted successfully'

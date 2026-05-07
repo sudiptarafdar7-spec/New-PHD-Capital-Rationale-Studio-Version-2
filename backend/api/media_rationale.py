@@ -1207,12 +1207,21 @@ def delete_job(job_id):
         
         # Delete job from database (will cascade delete job_steps)
         with get_db_cursor(commit=True) as cursor:
+            cursor.execute("DELETE FROM saved_rationale WHERE job_id = %s", (job_id,))
             cursor.execute("DELETE FROM jobs WHERE id = %s", (job_id,))
         
         # Delete job directory and all files
         job_dir = _job_path(job_id)
         if os.path.exists(job_dir):
             shutil.rmtree(job_dir)
+        
+        # Detach any Media Presence row that linked to this rationale job
+        # so the user can restart it from MP.
+        try:
+            from backend.api.media_presence import unlink_deleted_job
+            unlink_deleted_job(job_id)
+        except Exception as _mp_err:
+            print(f"[media_rationale.delete_job] MP unlink failed: {_mp_err}")
         
         return jsonify({
             'success': True,

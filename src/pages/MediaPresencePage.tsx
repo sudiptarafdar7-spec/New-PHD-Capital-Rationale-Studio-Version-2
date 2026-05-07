@@ -18,7 +18,7 @@ import {
   Radio, Plus, Mic, Sparkles, Wifi, Wand2, Download, RefreshCw, Trash2,
   Play, Loader2, CheckCircle2, AlertTriangle, Clock, Youtube, Tv,
   Facebook, Instagram, Send, MessageCircle, Calendar, Search as SearchIcon,
-  ExternalLink, Filter, X, History,
+  ExternalLink, Filter, X, History, Upload,
 } from 'lucide-react';
 import { getYouTubeEmbedUrl } from '@/lib/youtube-utils';
 
@@ -175,6 +175,46 @@ export default function MediaPresencePage({ onNavigate }: Props) {
 
   // Track which row is currently triggering an action
   const [actingId, setActingId] = useState<number | null>(null);
+  const [signingId, setSigningId] = useState<string | null>(null);
+
+  // Open native file picker, POST the chosen PDF to the unified saved-rationale
+  // upload-signed endpoint, then refresh MP rows so the row flips to "signed".
+  const uploadSignedPdf = (rationaleJobId: string) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'application/pdf';
+    input.onchange = async (e: Event) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+      try {
+        setSigningId(rationaleJobId);
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('jobId', rationaleJobId);
+        const res = await fetch('/api/v1/saved-rationale/upload-signed', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+          body: formData,
+        });
+        if (res.ok) {
+          toast.success('Signed PDF uploaded — Media Presence updated');
+          loadItems();
+        } else {
+          let detail = '';
+          try {
+            const d = await res.json();
+            detail = d?.error || d?.message || '';
+          } catch { /* ignore */ }
+          toast.error(detail || `Upload failed (HTTP ${res.status})`);
+        }
+      } catch (err: any) {
+        toast.error(err?.message || 'Failed to upload signed PDF');
+      } finally {
+        setSigningId(null);
+      }
+    };
+    input.click();
+  };
   const pollRef = useRef<NodeJS.Timeout | null>(null);
 
   // Video player popup state
@@ -1000,6 +1040,23 @@ export default function MediaPresencePage({ onNavigate }: Props) {
                                 title="Download signed PDF"
                               >
                                 <Download className="w-3 h-3 mr-1" /> Signed
+                              </Button>
+                            )}
+                            {item.unsigned_pdf_path && !item.signed_pdf_path && item.rationale_job_id && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => uploadSignedPdf(item.rationale_job_id!)}
+                                disabled={signingId === item.rationale_job_id}
+                                className="h-7 px-2 text-[11px] justify-start border-amber-500/40 text-amber-600 hover:bg-amber-50 disabled:opacity-50"
+                                title="Upload signed PDF for this rationale"
+                              >
+                                {signingId === item.rationale_job_id ? (
+                                  <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                                ) : (
+                                  <Upload className="w-3 h-3 mr-1" />
+                                )}
+                                Upload Signed
                               </Button>
                             )}
                             {!item.unsigned_pdf_path && !item.signed_pdf_path && item.output_pdf_path && (

@@ -693,4 +693,12 @@ def delete_job(job_id):
         except Exception as exc:
             print(f"[ai_transcribe] failed to remove folder {folder}: {exc}")
 
+    # Detach any Media Presence row that linked to this transcribe job so its
+    # Voice/AI buttons reappear.
+    try:
+        from backend.api.media_presence import unlink_deleted_job
+        unlink_deleted_job(job_id)
+    except Exception as _mp_err:
+        print(f"[ai_transcribe.delete_job] MP unlink failed: {_mp_err}")
+
     return jsonify({"success": True, "message": "Job deleted"}), 200

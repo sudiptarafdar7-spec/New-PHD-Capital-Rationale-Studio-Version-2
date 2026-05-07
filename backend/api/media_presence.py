@@ -202,6 +202,55 @@ def _trigger_downstream_job(media_row, transcript_text, user_id):
     raise ValueError(f"Unknown rationale_tool: {tool}")
 
 
+def unlink_deleted_job(job_id):
+    """Reset MP rows that referenced a now-deleted job so the user can
+    restart the corresponding step.
+
+    - If the deleted job was the linked transcribe job (Voice Typing /
+      AI Transcribe / Live Transcribe), clear linked_transcribe_job_id,
+      transcribe_method, transcribe_status (back to 'pending'), and any
+      transcript text/path.  The Voice/AI buttons reappear in MP.
+    - If the deleted job was the rationale job (Bulk / Media / Premium /
+      Manual), clear rationale_job_id, rationale_status (back to
+      'pending') and output_pdf_path.  The "Start" rationale button
+      reappears.
+    Safe to call for any job_id — does nothing when no MP row references
+    it.  Caller is responsible for already having committed the DELETE
+    on the jobs row before invoking this (so the LEFT JOIN in
+    _sync_from_job doesn't re-stamp stale data)."""
+    if not job_id:
+        return
+    try:
+        with get_db_cursor(commit=True) as cursor:
+            cursor.execute(
+                """
+                UPDATE media_presence
+                SET linked_transcribe_job_id = NULL,
+                    transcribe_method = NULL,
+                    transcribe_status = 'pending',
+                    transcript_text = NULL,
+                    transcript_file_path = NULL,
+                    updated_at = %s
+                WHERE linked_transcribe_job_id = %s
+                """,
+                (datetime.now(), job_id),
+            )
+            cursor.execute(
+                """
+                UPDATE media_presence
+                SET rationale_job_id = NULL,
+                    rationale_status = 'pending',
+                    output_pdf_path = NULL,
+                    updated_at = %s
+                WHERE rationale_job_id = %s
+                """,
+                (datetime.now(), job_id),
+            )
+    except Exception as exc:
+        # Never let MP cleanup failures break the underlying job DELETE.
+        print(f"[media_presence] unlink_deleted_job({job_id}) failed: {exc}")
+
+
 def _sync_from_job(media_id):
     """Refresh rationale_status & output_pdf_path on a media_presence row
     by inspecting its linked job + saved_rationale row."""
@@ -226,7 +275,9 @@ def _sync_from_job(media_id):
         new_status = row.get("rationale_status")
         new_pdf = row.get("signed_pdf_path") or row.get("unsigned_pdf_path")
 
-        if job_status in _DONE_STATUSES:
+        if job_status == "signed" or row.get("signed_pdf_path"):
+            new_status = "signed"
+        elif job_status in _DONE_STATUSES:
             new_status = "done"
         elif job_status in _FAILED_STATUSES:
             new_status = "failed"
@@ -263,9 +314,12 @@ def list_entries():
         rationale_status=rationale_status,
         created_by=owner_filter,
     )
-    # Opportunistic status sync for any entry with a running job
+    # Opportunistic status sync for any entry with a linked rationale job.
+    # We deliberately re-sync rows in 'done' state too, because a later signed
+    # PDF upload flips job.status='signed' and we want MP to reflect it.
+    # Only terminal 'failed' / 'signed' rows are skipped.
     for r in rows:
-        if r.get("rationale_job_id") and r.get("rationale_status") not in ("done", "failed"):
+        if r.get("rationale_job_id") and r.get("rationale_status") not in ("failed", "signed"):
             try:
                 _sync_from_job(r["id"])
             except Exception as exc:
