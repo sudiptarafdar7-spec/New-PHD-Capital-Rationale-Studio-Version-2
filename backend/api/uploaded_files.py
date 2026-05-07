@@ -301,6 +301,32 @@ def delete_file(file_id):
         print(f"Error deleting file: {e}")
         return jsonify({'error': str(e)}), 500
 
+@uploaded_files_bp.route('/public/company-logo', methods=['GET'])
+def public_company_logo():
+    """Public (unauthenticated) endpoint that streams the currently
+    uploaded Company Logo so the login page (where no JWT exists yet)
+    can show the customer's brand mark instead of the bundled default.
+    Returns 404 if no logo has been uploaded."""
+    try:
+        with get_db_cursor() as cursor:
+            cursor.execute(
+                "SELECT * FROM uploaded_files WHERE file_type = %s "
+                "ORDER BY uploaded_at DESC LIMIT 1",
+                ('companyLogo',)
+            )
+            file_record = cursor.fetchone()
+            if not file_record or not os.path.exists(file_record['file_path']):
+                return jsonify({'error': 'No company logo uploaded'}), 404
+            return send_file(
+                file_record['file_path'],
+                as_attachment=False,
+                download_name=file_record['file_name']
+            )
+    except Exception as e:
+        print(f"Error serving public company logo: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 @uploaded_files_bp.route('/download/<int:file_id>', methods=['GET'])
 @jwt_required()
 def download_file(file_id):

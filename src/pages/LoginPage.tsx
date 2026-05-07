@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { LogIn } from 'lucide-react';
 import { useAuth } from '../lib/auth-context';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
-import logo from '../assets/phd-logo.webp';
+import { API_ENDPOINTS } from '../lib/api-config';
+import defaultLogo from '../assets/phd-logo.webp';
 
 interface LoginPageProps {
   onLoginSuccess: () => void;
@@ -16,6 +17,22 @@ export default function LoginPage({ onLoginSuccess }: LoginPageProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const { login } = useAuth();
+  const [logoSrc, setLogoSrc] = useState<string>(defaultLogo);
+
+  // Use the uploaded company logo on the login screen as well. Falls
+  // back to the bundled default if no logo has been uploaded yet.
+  useEffect(() => {
+    let cancelled = false;
+    fetch(API_ENDPOINTS.uploadedFiles.publicCompanyLogo)
+      .then(r => (r.ok ? r.blob() : null))
+      .then(blob => {
+        if (!blob || cancelled) return;
+        const url = URL.createObjectURL(blob);
+        setLogoSrc(url);
+      })
+      .catch(() => { /* keep default */ });
+    return () => { cancelled = true; };
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -48,9 +65,9 @@ export default function LoginPage({ onLoginSuccess }: LoginPageProps) {
           <div className="text-center mb-8">
             <div className="flex justify-center mb-4">
               <img 
-                src={logo} 
-                alt="PHD Capital" 
-                className="w-20 h-auto max-w-full dark:brightness-110"
+                src={logoSrc} 
+                alt="Company logo" 
+                className="w-20 h-20 object-contain max-w-full dark:brightness-110"
               />
             </div>
             <h1 className="text-2xl font-bold text-foreground mb-2">PHD Capital</h1>
@@ -126,7 +143,7 @@ export default function LoginPage({ onLoginSuccess }: LoginPageProps) {
             Download Latest Master File
           </a>
           <p className="text-muted-foreground text-sm">
-            © 2025 PHD Capital. All rights reserved.
+            © 2026 PHD Capital. All rights reserved.
           </p>
         </div>
       </div>

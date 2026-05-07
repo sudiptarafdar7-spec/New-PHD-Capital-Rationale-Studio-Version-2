@@ -298,12 +298,12 @@ export default function Sidebar({ isOpen, onClose, currentPage, onNavigate, isCo
         )}>
           {!isCollapsed && (
             <p className="text-xs text-muted-foreground text-center">
-              © 2025 PHD CAPITAL
+              © 2026 PHD CAPITAL
             </p>
           )}
           {isCollapsed && (
             <p className="text-xs text-muted-foreground text-center hidden lg:block">
-              © 2025
+              © 2026
             </p>
           )}
         </div>

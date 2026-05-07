@@ -29,6 +29,7 @@ export const API_ENDPOINTS = {
     upload: `${API_BASE_URL}/api/v1/uploaded-files/upload`,
     delete: (id: number) => `${API_BASE_URL}/api/v1/uploaded-files/${id}`,
     download: (id: number) => `${API_BASE_URL}/api/v1/uploaded-files/download/${id}`,
+    publicCompanyLogo: `${API_BASE_URL}/api/v1/uploaded-files/public/company-logo`,
     masterStocks: (query: string) => `${API_BASE_URL}/api/v1/uploaded-files/master-stocks?q=${encodeURIComponent(query)}`,
   },
   channels: {
