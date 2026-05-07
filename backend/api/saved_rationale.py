@@ -45,6 +45,7 @@ def get_saved_rationale():
                     c.platform,
                     c.channel_url,
                     j.user_id,
+                    j.time AS event_time,
                     CONCAT(u.first_name, ' ', u.last_name) as creator_name
                 FROM saved_rationale sr
                 LEFT JOIN channels c ON sr.channel_id = c.id
@@ -79,7 +80,15 @@ def get_saved_rationale():
             
             cursor.execute(query, tuple(params))
             rationales = cursor.fetchall()
-            
+
+            # Serialize TIME (and other non-JSON-native) values so jsonify
+            # doesn't 500. psycopg2 returns TIME as datetime.time which
+            # Flask's default encoder cannot handle.
+            for r in rationales:
+                t = r.get('event_time')
+                if t is not None and not isinstance(t, str):
+                    r['event_time'] = t.strftime('%H:%M')
+
             return jsonify({
                 'success': True,
                 'rationales': rationales

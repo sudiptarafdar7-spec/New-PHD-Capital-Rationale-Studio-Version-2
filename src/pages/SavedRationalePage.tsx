@@ -26,6 +26,7 @@ interface SavedRationale {
   signed_pdf_path: string | null;
   signed_uploaded_at: string | null;
   created_at: string;
+  event_time?: string | null;
 }
 
 interface SavedRationalePageProps {
@@ -185,17 +186,34 @@ export default function SavedRationalePage({ onNavigate }: SavedRationalePagePro
   const handleViewJob = (jobId: string, toolUsed: string) => {
     // Navigate to the appropriate page based on tool used
     if (!onNavigate) return;
-    
+
     // Normalize tool_used to handle both snake_case and Title Case formats
     const normalizedTool = toolUsed.toLowerCase().replace(/ /g, '_');
-    
+
     if (normalizedTool === 'media_rationale') {
       onNavigate('media-rationale', jobId);
     } else if (normalizedTool === 'premium_rationale') {
       onNavigate('premium-rationale', jobId);
     } else if (normalizedTool === 'manual_rationale') {
       onNavigate('manual-rationale', jobId);
+    } else if (normalizedTool === 'bulk_rationale') {
+      onNavigate('bulk-rationale', jobId);
+    } else {
+      // Unknown tool — let the user know rather than misroute them.
+      toast.error(`Cannot open job: unknown tool "${toolUsed}"`);
     }
+  };
+
+  // Pretty-format an HH:MM[:SS] string into 12-hour with AM/PM.
+  const formatEventTime = (timeStr?: string | null) => {
+    if (!timeStr) return null;
+    const m = String(timeStr).match(/^(\d{1,2}):(\d{2})/);
+    if (!m) return null;
+    let h = parseInt(m[1], 10);
+    const mins = m[2];
+    const period = h >= 12 ? 'PM' : 'AM';
+    h = h % 12 || 12;
+    return `${h}:${mins} ${period}`;
   };
 
   const formatDate = (dateString: string) => {
@@ -576,41 +594,40 @@ export default function SavedRationalePage({ onNavigate }: SavedRationalePagePro
                     <FileText className="w-5 h-5 md:w-6 md:h-6 icon-primary" />
                   </div>
                   <div className="flex-1 min-w-0 space-y-2.5 md:space-y-3">
-                    {/* Title with Link (YouTube or Channel URL) */}
+                    {/* Title: <platform icon> Channel · Date · Time */}
                     <div>
                       <a
                         href={rationale.youtube_url || rationale.channel_url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-foreground hover:text-primary transition-colors inline-flex items-start gap-2 group"
+                        className="text-foreground hover:text-primary transition-colors inline-flex items-center gap-2 group flex-wrap"
+                        title={rationale.title}
                       >
-                        <span className="line-clamp-2 md:line-clamp-none">{rationale.title}</span>
-                        <ExternalLink className="w-4 h-4 text-muted-foreground group-hover:text-primary shrink-0 mt-0.5" />
+                        <PlatformIcon platform={rationale.platform} size={18} />
+                        <span className="text-foreground font-medium">{rationale.channel_name || 'Unknown'}</span>
+                        <span className="text-muted-foreground">·</span>
+                        <span className="text-foreground">{formatVideoDate(rationale.date)}</span>
+                        {formatEventTime(rationale.event_time) && (
+                          <>
+                            <span className="text-muted-foreground">·</span>
+                            <span className="text-foreground">{formatEventTime(rationale.event_time)}</span>
+                          </>
+                        )}
+                        <ExternalLink className="w-4 h-4 text-muted-foreground group-hover:text-primary shrink-0" />
                       </a>
                     </div>
-                    
-                    {/* Metadata Grid */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 md:gap-y-2.5 text-sm">
-                      <div className="flex items-center gap-2 text-muted-foreground">
-                        <PlatformIcon platform={rationale.platform} size={16} />
-                        <span className="text-foreground truncate">
-                          {rationale.channel_name}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2 text-muted-foreground flex-wrap">
-                        <Calendar className="w-4 h-4 shrink-0" />
-                        <span className="text-muted-foreground">Date:</span>
-                        <span className="text-foreground">{formatVideoDate(rationale.date)}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Badge className={getToolBadgeColor(rationale.tool_used)}>
-                          {rationale.tool_used}
-                        </Badge>
-                      </div>
-                      <div className="flex items-center gap-2 text-muted-foreground flex-wrap">
-                        <span className="text-muted-foreground shrink-0">Job ID:</span>
-                        <span className="font-mono text-xs text-foreground break-all md:break-normal md:truncate">{rationale.job_id}</span>
-                      </div>
+
+                    {/* Tool badge below the title */}
+                    <div className="flex items-center gap-2">
+                      <Badge className={getToolBadgeColor(rationale.tool_used)}>
+                        {rationale.tool_used}
+                      </Badge>
+                    </div>
+
+                    {/* Job ID metadata row */}
+                    <div className="flex items-center gap-2 text-muted-foreground flex-wrap text-sm">
+                      <span className="text-muted-foreground shrink-0">Job ID:</span>
+                      <span className="font-mono text-xs text-foreground break-all md:break-normal md:truncate">{rationale.job_id}</span>
                     </div>
 
                     {/* Signed Status */}
@@ -631,7 +648,7 @@ export default function SavedRationalePage({ onNavigate }: SavedRationalePagePro
                     className="bg-primary hover:bg-primary/90 active:scale-95 text-white w-full md:min-w-[160px] transition-all duration-200 hover:shadow-lg"
                   >
                     <Eye className="w-4 h-4 mr-2" />
-                    View Progress
+                    View Details
                   </Button>
 
                   <Button
