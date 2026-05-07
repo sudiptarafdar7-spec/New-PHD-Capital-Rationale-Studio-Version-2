@@ -323,8 +323,11 @@ def public_company_logo():
                 download_name=file_record['file_name']
             )
     except Exception as e:
+        # Log the real error server-side but never echo `str(e)` to an
+        # unauthenticated caller — it can leak DB column names, file
+        # paths, or stack-trace fragments.
         print(f"Error serving public company logo: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': 'Unable to serve company logo'}), 500
 
 
 @uploaded_files_bp.route('/download/<int:file_id>', methods=['GET'])

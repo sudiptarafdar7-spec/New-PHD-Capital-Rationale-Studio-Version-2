@@ -50,30 +50,21 @@ interface NavSection {
 }
 
 export default function Sidebar({ isOpen, onClose, currentPage, onNavigate, isCollapsed = false, onToggleCollapse }: SidebarProps) {
-  const { user, token } = useAuth();
+  const { user } = useAuth();
   const [logoSrc, setLogoSrc] = useState<string>(defaultLogo);
 
   // Pull the company logo uploaded under Upload Files → Company Logo
-  // and use it as the sidebar brand logo. Falls back to the bundled PHD
-  // Capital logo if no upload exists or the fetch fails.
+  // and use it as the sidebar brand logo. Uses the PUBLIC endpoint (no
+  // JWT required) so it works for both admin and employee users — the
+  // admin-only `/uploaded-files` list endpoint silently 403'd for
+  // employees and left them on the bundled default. Falls back to the
+  // bundled PHD Capital logo if no upload exists or the fetch fails.
   useEffect(() => {
-    if (!token) return;
     let cancelled = false;
     let objectUrl: string | null = null;
     (async () => {
       try {
-        const listRes = await fetch(API_ENDPOINTS.uploadedFiles.getAll, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!listRes.ok) return;
-        const data = await listRes.json();
-        const companyLogo = Array.isArray(data)
-          ? data.find((f: any) => f.file_type === 'companyLogo')
-          : null;
-        if (!companyLogo?.id) return;
-        const fileRes = await fetch(API_ENDPOINTS.uploadedFiles.download(companyLogo.id), {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        const fileRes = await fetch(API_ENDPOINTS.uploadedFiles.publicCompanyLogo);
         if (!fileRes.ok) return;
         const blob = await fileRes.blob();
         objectUrl = URL.createObjectURL(blob);
@@ -86,7 +77,7 @@ export default function Sidebar({ isOpen, onClose, currentPage, onNavigate, isCo
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [token]);
+  }, []);
   const isAdmin = user?.role === 'admin';
 
   const navSections: NavSection[] = [

@@ -54,7 +54,17 @@ else
     grep -q '^requirements\.txt$'                       <<<"$CHANGED" && need_pip=true || true
     grep -q '^package\(-lock\)\?\.json$'                <<<"$CHANGED" && need_npm=true || true
     grep -qE '^(src/|index\.html|vite\.config\.ts|tsconfig.*\.json|package\.json)' <<<"$CHANGED" && need_build=true || true
+    # Schema migrations live in database.py; new ALTER blocks there must
+    # always be applied. Also re-run init when any model file changes.
     grep -qE '^backend/(utils/database\.py|models/)'    <<<"$CHANGED" && need_db=true  || true
+fi
+
+# Always re-fetch the Vosk model if missing — covers a fresh VPS that
+# was deployed before this change OR a partial download from an aborted
+# previous deploy. ensure_model() is idempotent + uses an fcntl lock.
+need_vosk=false
+if [[ ! -f "$APP_DIR/backend/models/vosk/vosk-model-hi-0.22/.complete" ]]; then
+    need_vosk=true
 fi
 
 # ── 3. Python deps ───────────────────────────────────────────────────────────
@@ -87,6 +97,24 @@ if $need_db; then
         python -c 'from backend.utils.database import init_database; init_database()'
     "
     ok "DB schema synced"
+fi
+
+# ── 5b. Vosk Hindi model (≈1.5 GB, one-time) ────────────────────────────────
+# Voice Typing uses the LARGE Vosk Hindi model (vosk-model-hi-0.22).
+# If it's missing we pre-fetch it here so the first job doesn't stall.
+if $need_vosk; then
+    DISK_FREE_GB=$(df -BG --output=avail "$APP_DIR" | tail -1 | tr -dc '0-9')
+    if [[ "${DISK_FREE_GB:-0}" -lt 4 ]]; then
+        warn "Only ${DISK_FREE_GB} GB free — skipping Vosk pre-fetch (needs ~3 GB)."
+    else
+        log "pre-fetching Vosk Hindi model (~1.5 GB, one-time) ..."
+        sudo -u "$APP_USER" bash -lc "
+            cd '$APP_DIR'
+            set -a; source '$ENV_FILE'; set +a
+            source venv/bin/activate
+            python -c 'from backend.pipeline.voice_typing.transcribe_vosk import ensure_model; print(\"vosk model ready at:\", ensure_model(\"hi-IN\"))'
+        " && ok "vosk Hindi model ready" || warn "vosk pre-fetch failed — will retry inside the worker on first job."
+    fi
 fi
 
 # ── 6. Restart service ───────────────────────────────────────────────────────

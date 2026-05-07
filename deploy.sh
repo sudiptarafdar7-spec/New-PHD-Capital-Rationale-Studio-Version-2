@@ -72,7 +72,7 @@ if [[ "$IS_UPGRADE" == false ]]; then
     apt-get install -y --no-install-recommends \
         software-properties-common curl ca-certificates gnupg lsb-release \
         build-essential pkg-config git nginx ufw \
-        ffmpeg \
+        ffmpeg unzip \
         postgresql postgresql-contrib libpq-dev \
         certbot python3-certbot-nginx
     # Python 3.11 (deadsnakes) — Ubuntu 24.04 ships 3.12 by default but we want 3.11.
@@ -157,7 +157,7 @@ sudo -u "$APP_USER" mkdir -p \
 ok "code synced"
 
 # ═══════════════════════  PYTHON DEPENDENCIES  ══════════════════════════════
-header "6/8  Install Python + Node deps & build frontend"
+header "6/9  Install Python + Node deps & build frontend"
 sudo -u "$APP_USER" bash -lc "
     set -e
     cd '$APP_DIR'
@@ -170,8 +170,30 @@ sudo -u "$APP_USER" bash -lc "
 "
 ok "deps installed, frontend built"
 
+# ═══════════════════════  PRE-FETCH VOSK HINDI MODEL  ═══════════════════════
+# Voice Typing uses the LARGE Vosk Hindi model (vosk-model-hi-0.22, ~1.5 GB
+# zipped → ~2.8 GB extracted). Pre-fetching it here means the FIRST Voice
+# Typing job after deploy doesn't have to wait several minutes for the
+# download. Idempotent: ensure_model() short-circuits if the `.complete`
+# marker already exists, so re-running deploy.sh is a no-op.
+header "7/9  Pre-fetch Vosk Hindi model (≈1.5 GB, one-time)"
+DISK_FREE_GB=$(df -BG --output=avail "$APP_DIR" | tail -1 | tr -dc '0-9')
+if [[ "${DISK_FREE_GB:-0}" -lt 4 ]]; then
+    warn "Only ${DISK_FREE_GB} GB free under $APP_DIR — Vosk model needs ~3 GB."
+    warn "Skipping pre-fetch. Free up disk and re-run, or it will fail on first job."
+else
+    sudo -u "$APP_USER" bash -lc "
+        set -e
+        cd '$APP_DIR'
+        set -a; source '$ENV_FILE'; set +a
+        source venv/bin/activate
+        python -c 'from backend.pipeline.voice_typing.transcribe_vosk import ensure_model; print(\"vosk model ready at:\", ensure_model(\"hi-IN\"))'
+    " || warn "Vosk pre-fetch failed — will retry inside the worker on first job."
+    ok "vosk Hindi model ready"
+fi
+
 # ═══════════════════════  DATABASE INIT + ADMIN  ════════════════════════════
-header "7/8  Init DB schema & ensure admin user"
+header "8/9  Init DB schema & ensure admin user"
 sudo -u "$APP_USER" bash -lc "
     set -e
     cd '$APP_DIR'
@@ -205,7 +227,7 @@ fi
 ok "DB ready"
 
 # ═══════════════════════  SYSTEMD + NGINX + SSL  ════════════════════════════
-header "8/8  systemd, nginx, SSL"
+header "9/9  systemd, nginx, SSL"
 
 # systemd unit
 cat > "$SERVICE_FILE" <<EOF
