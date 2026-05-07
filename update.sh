@@ -77,7 +77,9 @@ fi
 # ── 4. Node deps + build ─────────────────────────────────────────────────────
 if $need_npm; then
     log "installing Node deps ..."
-    sudo -u "$APP_USER" bash -lc "cd '$APP_DIR' && npm ci --no-audit --no-fund"
+    # npm install (not 'npm ci') because package-lock.json is gitignored
+    # in this project, so 'npm ci' would fail with EUSAGE on the VPS.
+    sudo -u "$APP_USER" bash -lc "cd '$APP_DIR' && npm install --no-audit --no-fund"
     ok "npm done"
     need_build=true
 fi

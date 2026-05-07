@@ -165,7 +165,9 @@ sudo -u "$APP_USER" bash -lc "
     source venv/bin/activate
     pip install --upgrade pip wheel
     pip install -r requirements.txt
-    npm ci --no-audit --no-fund
+    # npm install (not 'npm ci') because package-lock.json is gitignored
+    # in this project, so 'npm ci' would fail with EUSAGE on the VPS.
+    npm install --no-audit --no-fund
     npm run build
 "
 ok "deps installed, frontend built"
