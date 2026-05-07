@@ -17,11 +17,11 @@ import {
   Radio, Plus, Mic, Sparkles, Wifi, Wand2, Download, RefreshCw, Trash2,
   Play, Loader2, CheckCircle2, AlertTriangle, Clock, Youtube, Tv,
   Facebook, Instagram, Send, MessageCircle, Calendar, Search as SearchIcon,
-  ExternalLink,
+  ExternalLink, Filter, X,
 } from 'lucide-react';
 import { getYouTubeEmbedUrl } from '@/lib/youtube-utils';
 
-interface Channel { id: number; channel_name: string; platform: string; }
+interface Channel { id: number; channel_name: string; platform: string; logoPath?: string; }
 
 interface MediaPresenceItem {
   id: number;
@@ -466,6 +466,55 @@ export default function MediaPresencePage({ onNavigate }: Props) {
     setVideoOpen(true);
   };
 
+  // ── Filter state ──────────────────────────────────────────────────────────
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [fSearch, setFSearch] = useState('');         // channel/platform name fuzzy
+  const [fPlatform, setFPlatform] = useState<string>('all');
+  const [fDate, setFDate] = useState<string>('');
+  const [fTime, setFTime] = useState<string>('');
+  const [fTranscribe, setFTranscribe] = useState<string>('all');
+  const [fRationale, setFRationale] = useState<string>('all');
+  // Track logo URLs that failed to load so we can render the initials fallback.
+  const [brokenLogos, setBrokenLogos] = useState<Set<string>>(new Set());
+
+  const clearFilters = () => {
+    setFSearch(''); setFPlatform('all'); setFDate(''); setFTime('');
+    setFTranscribe('all'); setFRationale('all');
+  };
+  const activeFilterCount = [
+    fSearch.trim(), fPlatform !== 'all' ? fPlatform : '', fDate, fTime,
+    fTranscribe !== 'all' ? fTranscribe : '', fRationale !== 'all' ? fRationale : '',
+  ].filter(Boolean).length;
+
+  // Lookup: channel_id → channel record (for logo & name)
+  const channelById = useMemo(() => {
+    const m = new Map<number, Channel>();
+    channels.forEach(c => m.set(c.id, c));
+    return m;
+  }, [channels]);
+
+  // Apply filters before rendering table. Search uses the SAME resolved channel
+  // name we render in the UI (item.channel_name → channels lookup fallback) so
+  // a row can never appear with a name the user can't find via search.
+  const filteredItems = useMemo(() => {
+    return items.filter(it => {
+      if (fPlatform !== 'all' && (it.platform || '').toLowerCase() !== fPlatform) return false;
+      if (fDate && it.event_date !== fDate) return false;
+      if (fTime && (it.event_time || '').slice(0, 5) !== fTime) return false;
+      if (fTranscribe !== 'all' && it.transcribe_status !== fTranscribe) return false;
+      if (fRationale !== 'all' && it.rationale_status !== fRationale) return false;
+      const q = fSearch.trim().toLowerCase();
+      if (q) {
+        const resolvedChannel = it.channel_name
+          || (it.channel_id ? channelById.get(it.channel_id)?.channel_name : '')
+          || '';
+        const hay = `${resolvedChannel} ${it.platform || ''}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [items, fSearch, fPlatform, fDate, fTime, fTranscribe, fRationale, channelById]);
+
   // Stats summary
   const stats = useMemo(() => {
     const today = TODAY();
@@ -532,11 +581,77 @@ export default function MediaPresencePage({ onNavigate }: Props) {
 
       <Card className="border-border/60 shadow-lg shadow-black/10 overflow-hidden">
         <CardHeader className="border-b border-border/50 bg-card/40">
-          <CardTitle className="text-base">Today &amp; recent entries</CardTitle>
-          <CardDescription>
-            Pick a transcribe method per row. Voice Typing and AI Transcribe feed into your
-            chosen rationale tool. Auto runs the full Media Rationale pipeline end-to-end.
-          </CardDescription>
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div>
+              <CardTitle className="text-base">Today &amp; recent entries</CardTitle>
+              <CardDescription>
+                Pick a transcribe method per row. Voice Typing and AI Transcribe feed into your
+                chosen rationale tool.
+              </CardDescription>
+            </div>
+            <Button
+              size="sm" variant={filterOpen || activeFilterCount > 0 ? 'default' : 'outline'}
+              onClick={() => setFilterOpen(o => !o)}
+              className="gap-1.5">
+              <Filter className="w-3.5 h-3.5" />
+              Filters
+              {activeFilterCount > 0 && (
+                <span className="ml-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-background/30 text-[10px] font-semibold">
+                  {activeFilterCount}
+                </span>
+              )}
+            </Button>
+          </div>
+
+          {filterOpen && (
+            <div className="mt-3 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
+              <div className="col-span-2 lg:col-span-2 relative">
+                <SearchIcon className="w-3.5 h-3.5 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2" />
+                <Input
+                  placeholder="Search channel or platform…"
+                  value={fSearch} onChange={e => setFSearch(e.target.value)}
+                  className="h-9 pl-8 text-sm" />
+              </div>
+              <Select value={fPlatform} onValueChange={setFPlatform}>
+                <SelectTrigger className="h-9"><SelectValue placeholder="Platform" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All platforms</SelectItem>
+                  {platformOptions.map(p => (
+                    <SelectItem key={p.value} value={p.value}>
+                      <span className="flex items-center gap-2">{platformIcon(p.value)}<span className="capitalize">{p.label}</span></span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Input type="date" value={fDate} onChange={e => setFDate(e.target.value)} className="h-9 text-sm" />
+              <Input type="time" value={fTime} onChange={e => setFTime(e.target.value)} className="h-9 text-sm" />
+              <Select value={fTranscribe} onValueChange={setFTranscribe}>
+                <SelectTrigger className="h-9"><SelectValue placeholder="Transcribe status" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Any transcribe</SelectItem>
+                  <SelectItem value="pending">Pending</SelectItem>
+                  <SelectItem value="started">Started</SelectItem>
+                  <SelectItem value="completed">Completed</SelectItem>
+                  <SelectItem value="failed">Failed</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={fRationale} onValueChange={setFRationale}>
+                <SelectTrigger className="h-9"><SelectValue placeholder="Rationale status" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Any rationale</SelectItem>
+                  <SelectItem value="pending">Pending</SelectItem>
+                  <SelectItem value="started">Started</SelectItem>
+                  <SelectItem value="done">Done</SelectItem>
+                  <SelectItem value="failed">Failed</SelectItem>
+                </SelectContent>
+              </Select>
+              {activeFilterCount > 0 && (
+                <Button size="sm" variant="ghost" onClick={clearFilters} className="h-9 col-span-2 lg:col-span-6 justify-self-end gap-1 text-muted-foreground hover:text-foreground">
+                  <X className="w-3.5 h-3.5" /> Clear filters
+                </Button>
+              )}
+            </div>
+          )}
         </CardHeader>
         <CardContent className="p-0 overflow-x-auto">
           {loading ? (
@@ -553,13 +668,24 @@ export default function MediaPresencePage({ onNavigate }: Props) {
                 Click <b>New Entry</b> to add today&apos;s media appearance.
               </p>
             </div>
+          ) : filteredItems.length === 0 ? (
+            <div className="py-16 text-center">
+              <div className="w-14 h-14 rounded-full bg-muted/30 mx-auto flex items-center justify-center mb-3">
+                <Filter className="w-6 h-6 text-muted-foreground" />
+              </div>
+              <p className="text-foreground font-medium">No entries match your filters</p>
+              <Button size="sm" variant="ghost" onClick={clearFilters} className="mt-3">
+                <X className="w-3.5 h-3.5 mr-1" /> Clear filters
+              </Button>
+            </div>
           ) : (
             <table className="w-full text-sm">
               <thead className="text-left text-xs uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border/50">
                 <tr>
-                  <th className="py-3 px-4 font-medium">Platform / Channel</th>
+                  <th className="py-3 px-4 font-medium">Platform</th>
+                  <th className="py-3 px-3 font-medium">Channel</th>
                   <th className="py-3 px-3 font-medium">Date · Time</th>
-                  <th className="py-3 px-3 font-medium">Video</th>
+                  <th className="py-3 px-2 font-medium w-[110px]">Video</th>
                   <th className="py-3 px-3 font-medium">Rationale Tool</th>
                   <th className="py-3 px-3 font-medium">Transcribe</th>
                   <th className="py-3 px-3 font-medium">Rationale</th>
@@ -568,7 +694,7 @@ export default function MediaPresencePage({ onNavigate }: Props) {
                 </tr>
               </thead>
               <tbody>
-                {items.map(item => {
+                {filteredItems.map(item => {
                   const acting = actingId === item.id;
                   const canVoiceOrAI =
                     item.rationale_tool !== 'media_rationale' &&
@@ -581,19 +707,45 @@ export default function MediaPresencePage({ onNavigate }: Props) {
                     item.rationale_tool === 'media_rationale' &&
                     item.transcribe_status === 'pending';
 
+                  const ch = item.channel_id ? channelById.get(item.channel_id) : undefined;
+                  const channelLogoUrl = ch?.logoPath || '';
+                  const channelDisplayName = item.channel_name || ch?.channel_name || '—';
                   return (
                     <tr key={item.id}
                         className="border-b border-border/30 align-middle hover:bg-muted/10 transition-colors">
+                      {/* Platform: icon + name */}
                       <td className="py-3.5 px-4">
                         <div className="flex items-center gap-2.5">
                           <div className="w-9 h-9 rounded-lg bg-muted/30 border border-border/40 flex items-center justify-center shrink-0">
                             {platformIcon(item.platform)}
                           </div>
-                          <div>
-                            <div className="font-medium text-foreground capitalize leading-tight">{item.platform}</div>
-                            <div className="text-xs text-muted-foreground">
-                              {item.channel_name || '—'}
+                          <div className="font-medium text-foreground capitalize leading-tight">
+                            {item.platform}
+                          </div>
+                        </div>
+                      </td>
+                      {/* Channel: uploaded logo + name */}
+                      <td className="py-3.5 px-3">
+                        <div className="flex items-center gap-2.5 min-w-[160px]">
+                          {channelLogoUrl && !brokenLogos.has(channelLogoUrl) ? (
+                            <img
+                              src={channelLogoUrl}
+                              alt={channelDisplayName}
+                              className="w-9 h-9 rounded-lg border border-border/40 bg-muted/30 object-cover shrink-0"
+                              onError={() => setBrokenLogos(prev => {
+                                if (prev.has(channelLogoUrl)) return prev;
+                                const next = new Set(prev);
+                                next.add(channelLogoUrl);
+                                return next;
+                              })}
+                            />
+                          ) : (
+                            <div className="w-9 h-9 rounded-lg bg-muted/30 border border-border/40 flex items-center justify-center shrink-0 text-xs font-semibold text-muted-foreground">
+                              {(channelDisplayName || '?').slice(0, 2).toUpperCase()}
                             </div>
+                          )}
+                          <div className="font-medium text-foreground leading-tight truncate max-w-[180px]">
+                            {channelDisplayName}
                           </div>
                         </div>
                       </td>
@@ -601,20 +753,17 @@ export default function MediaPresencePage({ onNavigate }: Props) {
                         <div className="font-medium text-foreground">{item.event_date}</div>
                         <div className="text-xs text-muted-foreground">{item.event_time}</div>
                       </td>
-                      <td className="py-3.5 px-3">
+                      {/* Video: just a Play button, no title */}
+                      <td className="py-3.5 px-2 w-[110px]">
                         {item.video_url ? (
                           <Button size="sm" variant="outline"
                                   onClick={() => openVideo(item)}
+                                  title={item.video_title || 'Play video'}
                                   className="h-8 gap-1.5 border-primary/30 text-primary hover:bg-primary/10 hover:text-primary">
-                            <Play className="w-3.5 h-3.5 fill-current" /> Play Video
+                            <Play className="w-3.5 h-3.5 fill-current" /> Play
                           </Button>
                         ) : (
-                          <span className="text-muted-foreground text-xs">{item.video_title || '—'}</span>
-                        )}
-                        {item.video_title && item.video_url && (
-                          <div className="text-[11px] text-muted-foreground mt-1 max-w-[200px] truncate">
-                            {item.video_title}
-                          </div>
+                          <span className="text-muted-foreground text-xs">—</span>
                         )}
                       </td>
                       <td className="py-3.5 px-3">
