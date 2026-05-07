@@ -1100,8 +1100,7 @@ export default function MediaPresencePage({ onNavigate }: Props) {
           <DialogHeader>
             <DialogTitle>New Media Presence entry</DialogTitle>
             <DialogDescription>
-              Pick a platform from your Channels database. For YouTube, paste the video URL and
-              click <b>Fetch</b> to auto-fill channel, date, time and title from the YouTube Data API.
+              For YouTube, paste the video URL and click <b>Fetch</b> to auto-fill channel, date, time and title from the YouTube.
               For other platforms, fill the fields manually.
             </DialogDescription>
           </DialogHeader>
