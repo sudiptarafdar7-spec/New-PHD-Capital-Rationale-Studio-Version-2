@@ -243,13 +243,13 @@ def create_job():
         # browser is optional — the transcript will appear in jobs.payload
         # as the worker progresses and the user can poll for it any time.
         try:
-            from backend.pipeline.voice_typing.transcribe_gemini import spawn as spawn_vt
+            from backend.pipeline.voice_typing.transcribe_vosk import spawn as spawn_vt
             spawn_vt(job_id, video_url, language)
         except Exception as spawn_err:
             # Worker spawn failure is non-fatal at the API level — we still
             # return the created job so the user can retry. But mark the job
             # as failed so the UI can show an error.
-            print(f"voice_typing create_job: Gemini spawn failed: {spawn_err}")
+            print(f"voice_typing create_job: Vosk spawn failed: {spawn_err}")
             try:
                 with get_db_cursor(commit=True) as cursor:
                     payload['transcribe_error'] = f'Worker spawn failed: {spawn_err}'
@@ -359,7 +359,7 @@ def upload_audio(job_id):
 
         # Spawn the upload-aware worker. Same fail-soft pattern as create_job.
         try:
-            from backend.pipeline.voice_typing.transcribe_gemini import spawn_uploaded
+            from backend.pipeline.voice_typing.transcribe_vosk import spawn_uploaded
             spawn_uploaded(job_id, source_path, language)
         except Exception as spawn_err:
             print(f"voice_typing upload_audio: spawn_uploaded failed: {spawn_err}")
@@ -1078,7 +1078,7 @@ def create_from_upload():
             created = cursor.fetchone()
 
         # Spawn the upload-mode Vosk worker.
-        from backend.pipeline.voice_typing.transcribe_gemini import spawn_uploaded
+        from backend.pipeline.voice_typing.transcribe_vosk import spawn_uploaded
         spawn_uploaded(job_id, upload_path, language)
 
         return jsonify({'success': True, 'job': _serialize_with_channel(created)}), 200

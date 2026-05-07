@@ -43,13 +43,20 @@ from datetime import datetime
 from backend.utils.database import get_db_cursor
 
 
-# Model registry. Keep these to the SMALL variants — they're 40-50 MB each
-# and download in a few seconds. The larger Vosk models (1.5 GB+) need a
-# fatter VPS than what we want to assume.
+# Model registry.
+#
+# For Hindi we now use the FULL `vosk-model-hi-0.22` (~1.5 GB) instead of
+# the small variant. The user explicitly opted in to the large model for
+# better Hindi accuracy on financial/trading speech (PHD Capital). First
+# boot will take a few minutes to download and ~1.6 GB on disk; subsequent
+# boots reuse the extracted model under backend/models/vosk/.
+#
+# English models are kept on the small variants — they're only used as a
+# fallback for non-Hindi jobs where size matters more than accuracy.
 VOSK_MODELS = {
     'hi': (
-        'vosk-model-small-hi-0.22',
-        'https://alphacephei.com/vosk/models/vosk-model-small-hi-0.22.zip',
+        'vosk-model-hi-0.22',
+        'https://alphacephei.com/vosk/models/vosk-model-hi-0.22.zip',
     ),
     'en-IN': (
         'vosk-model-small-en-in-0.4',
@@ -577,22 +584,18 @@ def recover_orphans():
             # Prefer the uploaded-audio path if the job was kicked off via the
             # manual-upload endpoint (the user explicitly opted out of YouTube
             # download). Otherwise fall back to re-running the YouTube path.
-            # Voice Typing now uses Gemini as the primary engine (better
-            # Hindi multi-speaker accuracy). Recovery hands off to those
-            # spawn functions; Vosk is retained only as a legacy fallback.
-            from backend.pipeline.voice_typing.transcribe_gemini import (
-                spawn as gemini_spawn,
-                spawn_uploaded as gemini_spawn_uploaded,
-            )
+            # Voice Typing now uses the large Vosk Hindi model as the
+            # primary engine (user opted in for Vosk over Gemini). Recovery
+            # hands off to the same spawn functions defined in this module.
             if uploaded_audio_path and os.path.exists(uploaded_audio_path):
-                print(f"♻️  [voice-typing] Recovering orphan UPLOAD job {row['id']} via Gemini")
+                print(f"♻️  [voice-typing] Recovering orphan UPLOAD job {row['id']} via Vosk")
                 _patch_progress(row['id'], '[Resumed after server restart…]', 1)
-                gemini_spawn_uploaded(row['id'], uploaded_audio_path, language)
+                spawn_uploaded(row['id'], uploaded_audio_path, language)
                 recovered += 1
             elif video_url:
-                print(f"♻️  [voice-typing] Recovering orphan YOUTUBE job {row['id']} via Gemini")
+                print(f"♻️  [voice-typing] Recovering orphan YOUTUBE job {row['id']} via Vosk")
                 _patch_progress(row['id'], '[Resumed after server restart…]', 1)
-                gemini_spawn(row['id'], video_url, language)
+                spawn(row['id'], video_url, language)
                 recovered += 1
             else:
                 print(f"[vosk] orphan {row['id']} has neither uploaded_audio_path "
