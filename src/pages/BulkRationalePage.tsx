@@ -25,9 +25,22 @@ import { toast } from 'sonner';
 import { 
   Layers, Play, Download, Save, FileSignature, Trash2, 
   ArrowLeft, Upload, CheckCircle2, XCircle, Loader2, Clock,
-  RefreshCw, RotateCcw, FileEdit, Pencil
+  RefreshCw, RotateCcw, FileEdit, Pencil,
+  Youtube, Tv, Facebook, Instagram, Send, MessageCircle, Radio
 } from 'lucide-react';
 import SignedFileUpload from '@/components/SignedFileUpload';
+
+// Render a small platform-coloured icon next to channel options
+const platformIcon = (platform: string) => {
+  const p = (platform || '').toLowerCase();
+  if (p === 'youtube')   return <Youtube className="w-4 h-4 text-red-500 shrink-0" />;
+  if (p === 'tv')        return <Tv className="w-4 h-4 text-purple-400 shrink-0" />;
+  if (p === 'facebook')  return <Facebook className="w-4 h-4 text-blue-500 shrink-0" />;
+  if (p === 'instagram') return <Instagram className="w-4 h-4 text-pink-500 shrink-0" />;
+  if (p === 'twitter' || p === 'x') return <Send className="w-4 h-4 text-sky-400 shrink-0" />;
+  if (p === 'whatsapp')  return <MessageCircle className="w-4 h-4 text-emerald-400 shrink-0" />;
+  return <Radio className="w-4 h-4 text-muted-foreground shrink-0" />;
+};
 
 interface Channel {
   id: number;
@@ -1505,12 +1518,15 @@ export default function BulkRationalePage({ onNavigate, selectedJobId }: BulkRat
                   <Label>Channel/Platform *</Label>
                   <Select value={selectedChannelId} onValueChange={setSelectedChannelId}>
                     <SelectTrigger>
-                      <SelectValue placeholder="Select platform" />
+                      <SelectValue placeholder="Select channel" />
                     </SelectTrigger>
                     <SelectContent>
                       {channels.map((channel) => (
                         <SelectItem key={channel.id} value={String(channel.id)}>
-                          {channel.platform} - {channel.channel_name}
+                          <span className="flex items-center gap-2">
+                            {platformIcon(channel.platform)}
+                            <span>{channel.channel_name}</span>
+                          </span>
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -1518,9 +1534,9 @@ export default function BulkRationalePage({ onNavigate, selectedJobId }: BulkRat
                 </div>
 
                 <div className="space-y-2">
-                  <Label>YouTube URL (Optional)</Label>
+                  <Label>Video URL (Optional)</Label>
                   <Input
-                    placeholder="https://youtube.com/watch?v=..."
+                    placeholder="Paste the video URL..."
                     value={youtubeUrl}
                     onChange={(e) => setYoutubeUrl(e.target.value)}
                   />
@@ -1753,18 +1769,21 @@ export default function BulkRationalePage({ onNavigate, selectedJobId }: BulkRat
                   <SelectContent>
                     {channels.map((c) => (
                       <SelectItem key={c.id} value={String(c.id)}>
-                        {c.platform} - {c.channel_name}
+                        <span className="flex items-center gap-2">
+                          {platformIcon(c.platform)}
+                          <span>{c.channel_name}</span>
+                        </span>
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="edit-youtube">YouTube URL</Label>
+                <Label htmlFor="edit-youtube">Video URL</Label>
                 <Input
                   id="edit-youtube"
                   type="url"
-                  placeholder="https://youtube.com/..."
+                  placeholder="Paste the video URL..."
                   value={editYoutubeUrl}
                   onChange={(e) => setEditYoutubeUrl(e.target.value)}
                 />
