@@ -77,6 +77,103 @@ def _job_owner_check(cursor, job_id, user_id):
     return cursor.fetchone()
 
 
+# ---------------------------------------------------------------------------
+# Media-Presence link-back helpers (mirror AI Transcribe behaviour)
+#
+# When a Voice Typing job was spawned from a Media Presence row (the user
+# clicked "via voice typing →" on the MP table), we mirror the VT job's
+# stage transitions onto media_presence.transcribe_status so the MP table
+# reflects the live state instead of being stuck on 'started' forever.
+# ---------------------------------------------------------------------------
+
+# Maps Voice Typing's internal status → the status string Media Presence
+# (and StatusPill) understands. The MP UI's StatusPill already renders
+# 'transcribing', 'review_transcript', 'translating', 'review_translation',
+# 'extracting', 'review_extract' as labelled, coloured pills (see
+# src/pages/MediaPresencePage.tsx :: StatusPill).
+_VT_STATUS_TO_MP = {
+    'recording': 'transcribing',
+    'awaiting_review': 'review_transcript',
+    'translating': 'translating',
+    'awaiting_translate_review': 'review_translation',
+    'arranging': 'extracting',
+    'awaiting_arrange_review': 'review_extract',
+    'bulk_started': 'completed',
+    'completed': 'completed',
+}
+
+
+def _mp_id_for_job(cursor, job_id):
+    """Return the linked media_presence_id for a Voice Typing job, or
+    None if the job wasn't started from an MP row."""
+    cursor.execute("SELECT payload FROM jobs WHERE id = %s", (job_id,))
+    row = cursor.fetchone()
+    if not row:
+        return None
+    payload = _payload_dict(row)
+    return payload.get('media_presence_id')
+
+
+def _mp_linkback_status(job_id, vt_status):
+    """Mirror a Voice Typing stage transition onto its linked
+    media_presence row's transcribe_status. No-op if the job wasn't
+    started from a Media Presence entry, OR if the MP row has since been
+    re-linked to a newer transcribe job (prevents a stale worker from
+    overwriting fresher state — same race-safety guard AI Transcribe
+    needs but doesn't yet have)."""
+    mp_status = _VT_STATUS_TO_MP.get(vt_status)
+    if not mp_status:
+        return
+    try:
+        with get_db_cursor(commit=True) as cursor:
+            mp_id = _mp_id_for_job(cursor, job_id)
+            if not mp_id:
+                return
+            cursor.execute(
+                """UPDATE media_presence
+                   SET transcribe_status = %s,
+                       updated_at = %s
+                   WHERE id = %s
+                     AND linked_transcribe_job_id = %s""",
+                (mp_status, datetime.now(), mp_id, job_id),
+            )
+            if cursor.rowcount == 0:
+                print(f"ℹ️  Voice Typing {job_id}: MP {mp_id} no longer "
+                      f"linked to this job — skipping stale {vt_status} update")
+    except Exception as link_err:
+        print(f"⚠️  Voice Typing {job_id}: MP stage linkback skipped: {link_err}")
+
+
+def _mp_linkback_failed(job_id, err_msg):
+    """Mirror a Voice Typing job-level failure onto the linked
+    media_presence row so its Transcribe pill flips from 'started' to
+    'failed' instead of getting stuck on the spinner.
+
+    Race-safety: only touches the MP row if it's STILL linked to this
+    specific Voice Typing job. If the user has since re-linked the row
+    to a newer job, the old worker's failure callback is dropped."""
+    try:
+        with get_db_cursor(commit=True) as cursor:
+            mp_id = _mp_id_for_job(cursor, job_id)
+            if not mp_id:
+                return
+            cursor.execute(
+                """UPDATE media_presence
+                   SET transcribe_status = 'failed',
+                       notes = %s,
+                       updated_at = %s
+                   WHERE id = %s
+                     AND linked_transcribe_job_id = %s""",
+                (f"Voice Typing error: {(err_msg or '')[:500]}",
+                 datetime.now(), mp_id, job_id),
+            )
+            if cursor.rowcount == 0:
+                print(f"ℹ️  Voice Typing {job_id}: MP {mp_id} no longer "
+                      f"linked to this job — skipping stale failure update")
+    except Exception as link_err:
+        print(f"⚠️  Voice Typing {job_id}: MP failure linkback skipped: {link_err}")
+
+
 def _serialize(job):
     payload = _payload_dict(job)
     return {
@@ -259,6 +356,7 @@ def create_job():
                     )
             except Exception:
                 pass
+            _mp_linkback_failed(job_id, f'Worker spawn failed: {spawn_err}')
 
         return jsonify({'success': True, 'job': _serialize_with_channel(row)}), 201
     except Exception as e:
@@ -357,6 +455,10 @@ def upload_audio(job_id):
             )
             updated = cursor.fetchone()
 
+        # Mirror the re-started transcribe state on the linked MP row
+        # (overrides any prior 'failed' pill from the previous attempt).
+        _mp_linkback_status(job_id, 'recording')
+
         # Spawn the upload-aware worker. Same fail-soft pattern as create_job.
         try:
             from backend.pipeline.voice_typing.transcribe_vosk import spawn_uploaded
@@ -378,6 +480,7 @@ def upload_audio(job_id):
                     )
             except Exception:
                 pass
+            _mp_linkback_failed(job_id, f'Worker spawn failed: {spawn_err}')
             return jsonify({'error': f'Worker spawn failed: {spawn_err}'}), 500
 
         return jsonify({'success': True, 'job': _serialize_with_channel(updated)}), 200
@@ -601,9 +704,11 @@ def _translate_only(job_id, transcript_text):
                 "UPDATE jobs SET status = 'failed', payload = %s::jsonb, updated_at = %s WHERE id = %s",
                 (json.dumps(payload), datetime.now(), job_id),
             )
+        _mp_linkback_failed(job_id, f'Translate failed: {err}')
         print(f"❌ Voice Typing job {job_id} failed during translate: {err}")
         return
 
+    parked = False
     with get_db_cursor(commit=True) as cursor:
         cursor.execute("SELECT payload FROM jobs WHERE id = %s", (job_id,))
         row = cursor.fetchone()
@@ -619,6 +724,9 @@ def _translate_only(job_id, transcript_text):
                WHERE id = %s AND status = 'translating'""",
             (json.dumps(payload), datetime.now(), job_id),
         )
+        parked = cursor.rowcount > 0
+    if parked:
+        _mp_linkback_status(job_id, 'awaiting_translate_review')
     print(f"✅ Voice Typing {job_id}: translation done — awaiting user review")
 
 
@@ -643,11 +751,13 @@ def _arrange_only(job_id, transcript_text):
                 "UPDATE jobs SET status = 'failed', payload = %s::jsonb, updated_at = %s WHERE id = %s",
                 (json.dumps(payload), datetime.now(), job_id),
             )
+        _mp_linkback_failed(job_id, f'Extract failed: {err}')
         print(f"❌ Voice Typing job {job_id} failed during arrange: {err}")
         return
 
     arranged = result['arranged_text']
 
+    parked = False
     with get_db_cursor(commit=True) as cursor:
         cursor.execute("SELECT payload FROM jobs WHERE id = %s", (job_id,))
         row = cursor.fetchone()
@@ -666,6 +776,9 @@ def _arrange_only(job_id, transcript_text):
                WHERE id = %s AND status = 'arranging'""",
             (json.dumps(payload), datetime.now(), job_id),
         )
+        arrange_parked = cursor.rowcount > 0
+    if arrange_parked:
+        _mp_linkback_status(job_id, 'awaiting_arrange_review')
     print(f"✅ Voice Typing {job_id}: arrange done — awaiting user review")
 
 
@@ -821,6 +934,8 @@ def translate_job(job_id):
                     'error': 'Another translate request is already in flight or the job has moved on. Refresh and try again.',
                 }), 409
 
+        _mp_linkback_status(job_id, 'translating')
+
         t = threading.Thread(
             target=_translate_only,
             args=(job_id, transcript_to_use),
@@ -898,6 +1013,8 @@ def arrange_job(job_id):
                 return jsonify({
                     'error': 'Another extract request is already in flight or the job has moved on. Refresh and try again.',
                 }), 409
+
+        _mp_linkback_status(job_id, 'arranging')
 
         t = threading.Thread(
             target=_arrange_only,

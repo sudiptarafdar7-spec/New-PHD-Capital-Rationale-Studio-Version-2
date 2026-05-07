@@ -223,7 +223,12 @@ def _patch_progress(job_id: str, transcript_text: str, progress: int,
 
 def _mark_failed(job_id: str, error: str):
     """Move the job into 'failed' state with a payload error string. Uses
-    JSONB merge so any concurrent transcript flush isn't clobbered."""
+    JSONB merge so any concurrent transcript flush isn't clobbered.
+
+    Also mirrors the failure onto the linked Media Presence row (if any)
+    so the MP table's Transcribe pill flips from 'started' to 'failed'
+    instead of getting stuck on the spinner — same pattern AI Transcribe
+    uses via its own _mp_linkback_failed."""
     payload_patch = {'transcribe_error': error[:500]}
     with get_db_cursor(commit=True) as cursor:
         cursor.execute(
@@ -234,6 +239,11 @@ def _mark_failed(job_id: str, error: str):
             "WHERE id = %s",
             (json.dumps(payload_patch), datetime.now(), job_id),
         )
+    try:
+        from backend.api.voice_typing import _mp_linkback_failed
+        _mp_linkback_failed(job_id, error)
+    except Exception as link_err:
+        print(f"⚠️  Voice Typing {job_id}: MP failure linkback skipped: {link_err}")
 
 
 def _is_cancelled(job_id: str) -> bool:
@@ -381,6 +391,11 @@ def _run_vosk_on_wav(job_id: str, audio_path: str, language: str,
                 # Persist whatever we have so far before exiting.
                 final_text = ' '.join(c for c in chunks if c).strip()
                 _patch_progress(job_id, final_text, 100, status='awaiting_review')
+                try:
+                    from backend.api.voice_typing import _mp_linkback_status
+                    _mp_linkback_status(job_id, 'awaiting_review')
+                except Exception as link_err:
+                    print(f"⚠️  [vosk] {job_id}: MP linkback skipped: {link_err}")
                 wf.close()
                 return
 
@@ -434,6 +449,13 @@ def _run_vosk_on_wav(job_id: str, audio_path: str, language: str,
     if not _patch_progress(job_id, final_text, 100, status='awaiting_review'):
         print(f"⚠️  [vosk] {job_id} vanished before final flush — nothing to do")
         return
+    # Mirror the awaiting_review state onto the linked Media Presence row
+    # (if any) so its Transcribe pill flips to "Review Transcript".
+    try:
+        from backend.api.voice_typing import _mp_linkback_status
+        _mp_linkback_status(job_id, 'awaiting_review')
+    except Exception as link_err:
+        print(f"⚠️  [vosk] {job_id}: MP awaiting_review linkback skipped: {link_err}")
     print(f"✅ [vosk] Worker finished {job_id} — {len(final_text)} chars")
 
 
