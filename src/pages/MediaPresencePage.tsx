@@ -874,7 +874,7 @@ export default function MediaPresencePage({ onNavigate }: Props) {
                   const channelDisplayName = item.channel_name || ch?.channel_name || '—';
                   return (
                     <tr key={item.id}
-                        className="border-b border-border/30 align-middle hover:bg-muted/10 transition-colors">
+                        className="border-b border-border/30 align-middle hover:bg-muted/10 transition-colors h-24">
                       {/* Platform: icon + name */}
                       <td className="py-6 px-4">
                         <div className="flex items-center gap-2.5">
