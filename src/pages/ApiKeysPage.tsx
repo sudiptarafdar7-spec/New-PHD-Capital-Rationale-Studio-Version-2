@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Key, Upload, Check, X, Loader2 } from 'lucide-react';
+import { Key, Upload, Check, X, Loader2, Eye, EyeOff } from 'lucide-react';
 import { API_ENDPOINTS, getAuthHeaders } from '../lib/api-config';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -19,6 +19,7 @@ export default function ApiKeysPage() {
     rapidapi_video_transcript: '',
   });
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [visibleKeys, setVisibleKeys] = useState<Record<string, boolean>>({});
   const [configuredProviders, setConfiguredProviders] = useState<Record<string, boolean>>({
     openai: false,
     gemini: false,
@@ -388,11 +389,21 @@ export default function ApiKeysPage() {
                   <div className="relative">
                     <Input
                       id={provider.id}
-                      type="password"
+                      type={visibleKeys[provider.id] ? 'text' : 'password'}
                       placeholder={provider.placeholder}
                       value={keys[provider.id] || ''}
                       onChange={(e) => setKeys(prev => ({ ...prev, [provider.id]: e.target.value }))}
+                      className="pr-10"
                     />
+                    <button
+                      type="button"
+                      onClick={() => setVisibleKeys(prev => ({ ...prev, [provider.id]: !prev[provider.id] }))}
+                      className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground transition-colors"
+                      aria-label={visibleKeys[provider.id] ? 'Hide API key' : 'Show API key'}
+                      title={visibleKeys[provider.id] ? 'Hide API key' : 'Show API key'}
+                    >
+                      {visibleKeys[provider.id] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
                   </div>
                   <div className="flex items-center justify-between">
                     <Button
