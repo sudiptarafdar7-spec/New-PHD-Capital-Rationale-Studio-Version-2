@@ -1045,6 +1045,27 @@ export default function AITranscribePage({ onNavigate, mediaId, selectedJobId }:
           <AlertTriangle className="w-4 h-4" />
           <AlertTitle>Something went wrong</AlertTitle>
           <AlertDescription className="break-words">{errorMsg}</AlertDescription>
+          {/* Manual audio fallback — only when Step 1 (Download Audio)
+              failed. RapidAPI + yt-dlp can both fail on age-gated /
+              private / region-blocked videos; the user can attach a
+              local file to skip the YouTube download entirely. */}
+          {job?.status === 'failed' &&
+           (job.steps || []).some(s => s.step_number === 1 && s.status === 'failed') && (
+            <UploadAudioFallback
+              jobId={job.jobId}
+              token={token}
+              onUploaded={(updated) => {
+                setErrorMsg('');
+                setJob((prev) => (prev ? { ...prev, ...updated } : prev));
+                // Resume polling — fetchJob() previously stopped polling
+                // when status flipped to 'failed', so we restart it here
+                // so the UI tracks the freshly-respawned pipeline live
+                // (mirrors the handleRestartStep behaviour).
+                stopPoll();
+                pollRef.current = setInterval(() => fetchJob(job.jobId), 3000);
+              }}
+            />
+          )}
         </Alert>
       )}
 
@@ -1436,6 +1457,93 @@ export default function AITranscribePage({ onNavigate, mediaId, selectedJobId }:
           </Card>
         </div>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// UploadAudioFallback
+//
+// Rendered inside the Step-1 failure alert. Lets the user attach a local
+// audio file (mp3 / m4a / wav / etc.) which the server saves under the
+// job folder and then re-runs the AI Transcribe pipeline starting from a
+// local_audio_path source — bypassing the failed YouTube downloader
+// (yt-dlp + RapidAPI). Mirrors the Voice Typing fallback pattern.
+// ---------------------------------------------------------------------------
+interface AiUploadAudioFallbackProps {
+  jobId: string;
+  token: string | undefined;
+  onUploaded: (patch: Partial<JobPayload>) => void;
+}
+
+function UploadAudioFallback({ jobId, token, onUploaded }: AiUploadAudioFallbackProps) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [uploading, setUploading] = useState(false);
+
+  const handlePick = () => {
+    if (uploading) return;
+    inputRef.current?.click();
+  };
+
+  const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    const MAX_BYTES = 500 * 1024 * 1024;
+    if (file.size > MAX_BYTES) {
+      toast.error(`File too large (${(file.size / 1024 / 1024).toFixed(0)} MB). Max 500 MB.`);
+      return;
+    }
+
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const r = await fetch(API_ENDPOINTS.aiTranscribe.uploadAudio(jobId), {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: fd,
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        toast.error(j.error || `Upload failed (HTTP ${r.status})`);
+        return;
+      }
+      toast.success('Audio uploaded — AI Transcribe pipeline restarting on the server.');
+      onUploaded({ status: 'processing', progress: 0, currentStep: 0 });
+    } catch (err: any) {
+      toast.error(err?.message || 'Upload failed');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <div className="mt-3 flex items-center gap-2 flex-wrap">
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".mp3,.m4a,.wav,.ogg,.opus,.webm,.mp4,.aac,.flac,.wma,audio/*"
+        className="hidden"
+        onChange={handleFile}
+      />
+      <Button
+        size="sm"
+        variant="secondary"
+        onClick={handlePick}
+        disabled={uploading}
+      >
+        {uploading ? (
+          <><Loader2 className="w-3 h-3 mr-1 animate-spin" /> Uploading…</>
+        ) : (
+          <><Upload className="w-3 h-3 mr-1" /> Upload audio file instead</>
+        )}
+      </Button>
+      <span className="text-xs text-muted-foreground">
+        Skip the YouTube download and run AssemblyAI on a file from your computer.
+        MP3 / M4A / WAV / OGG, up to 500 MB.
+      </span>
     </div>
   );
 }

@@ -803,6 +803,156 @@ def restart_step(job_id, step_number):
     }), 202
 
 
+@ai_transcribe_bp.route("/jobs/<job_id>/upload-audio", methods=["POST"])
+@jwt_required()
+def upload_audio(job_id):
+    """Manual audio fallback for AI Transcribe.
+
+    Used when Step 1 (download audio) failed because both yt-dlp and the
+    RapidAPI fallback couldn't pull the YouTube file (age-gated video,
+    cookies expired, region block, etc.). The user picks an audio file
+    from their computer; we save it under the job folder, reset every
+    pipeline step back to pending, flip the parent job back to
+    'processing', and re-spawn ``run_ai_transcribe_pipeline`` with a
+    ``local_audio_path`` source so step 1 skips YouTube entirely and
+    just normalises the uploaded file via ffmpeg.
+
+    Mirrors the Voice Typing /upload-audio pattern.
+    """
+    user_id = get_jwt_identity()
+    job, err = _check_job_access(job_id, user_id)
+    if err:
+        return jsonify({"error": err[0]}), err[1]
+
+    if "file" not in request.files:
+        return jsonify({"error": "No file uploaded (multipart field 'file' required)"}), 400
+
+    audio_file = request.files["file"]
+    if not audio_file.filename:
+        return jsonify({"error": "Empty audio upload"}), 400
+
+    # ---- Server-side validation (parity with Voice Typing fallback) -----
+    ALLOWED_EXTS = {
+        ".mp3", ".m4a", ".wav", ".ogg", ".opus", ".webm",
+        ".mp4", ".aac", ".flac", ".wma",
+    }
+    MAX_BYTES = 500 * 1024 * 1024  # 500 MB
+
+    ext = os.path.splitext(audio_file.filename)[1].lower()
+    if ext not in ALLOWED_EXTS:
+        return jsonify({
+            "error": f"Unsupported file type '{ext}'. Allowed: {', '.join(sorted(ALLOWED_EXTS))}",
+        }), 400
+
+    # Best-effort content-length check before saving (Werkzeug streams the
+    # body, so the post-save fallback below is the authoritative limit).
+    try:
+        content_length = int(request.content_length or 0)
+    except (TypeError, ValueError):
+        content_length = 0
+    if content_length and content_length > MAX_BYTES:
+        return jsonify({"error": f"File too large (max {MAX_BYTES // (1024*1024)} MB)"}), 413
+
+    # ---- Gate: only allow when step 1 actually failed -------------------
+    # Race-safety: confirm the parent job is in 'failed' state AND step 1
+    # is the failed step before we touch anything. This blocks accidental
+    # double-uploads, restart-step collisions, and uploads against jobs
+    # that failed at later stages (translate/extract) where re-running
+    # download wouldn't help.
+    with get_db_cursor() as cursor:
+        cursor.execute(
+            "SELECT status FROM jobs WHERE id = %s",
+            (job_id,),
+        )
+        cur = cursor.fetchone()
+        if not cur or cur.get("status") != "failed":
+            return jsonify({
+                "error": "Manual audio upload is only available after the job has failed.",
+            }), 409
+        cursor.execute(
+            """SELECT status FROM job_steps
+               WHERE job_id = %s AND step_number = 1""",
+            (job_id,),
+        )
+        step1 = cursor.fetchone()
+        if not step1 or step1.get("status") != "failed":
+            return jsonify({
+                "error": "Manual audio upload only applies when Step 1 (Download Audio) failed.",
+            }), 409
+
+    folder = job.get("folder_path") or os.path.join("backend", "job_files", job_id)
+    upload_dir = _ensure_dir(os.path.join(folder, "upload"))
+    safe_name = secure_filename(audio_file.filename) or "upload.wav"
+    local_path = os.path.join(upload_dir, safe_name)
+    try:
+        audio_file.save(local_path)
+    except Exception as save_err:
+        return jsonify({"error": f"Failed to save upload: {save_err}"}), 500
+
+    # Authoritative size check now that the file is on disk.
+    try:
+        actual_size = os.path.getsize(local_path)
+    except OSError:
+        actual_size = 0
+    if actual_size > MAX_BYTES:
+        try:
+            os.remove(local_path)
+        except OSError:
+            pass
+        return jsonify({"error": f"File too large (max {MAX_BYTES // (1024*1024)} MB)"}), 413
+
+    payload = _payload_dict(job)
+    lang = payload.get("language_code") or "hi"
+
+    # Atomic state transition: only flip the parent if it's STILL failed.
+    # If a competing /restart-step or /upload-audio request beat us to it,
+    # bail out without resetting steps or spawning a duplicate worker.
+    with get_db_cursor(commit=True) as cursor:
+        cursor.execute(
+            """UPDATE jobs
+               SET status='processing', current_step=0, progress=0,
+                   payload = COALESCE(payload, '{}'::jsonb) || %s::jsonb,
+                   updated_at=%s
+               WHERE id=%s AND status='failed'""",
+            (json.dumps({"uploaded_audio_path": local_path,
+                         "uploaded_audio_name": safe_name}),
+             datetime.now(), job_id),
+        )
+        if cursor.rowcount == 0:
+            return jsonify({
+                "error": "Another restart is already in flight. Refresh and try again.",
+            }), 409
+        # We won the transition — safe to reset step rows now.
+        cursor.execute(
+            """UPDATE job_steps
+               SET status='pending', message=NULL, started_at=NULL, ended_at=NULL,
+                   output_files='{}'
+               WHERE job_id=%s""",
+            (job_id,),
+        )
+
+    # Mirror the restart back onto the linked Media Presence row (if any)
+    # so its Transcribe pill leaves 'failed' and shows live progress.
+    try:
+        from backend.services.ai_transcribe_service import _mp_linkback_stage
+        _mp_linkback_stage(job_id, "processing")
+    except Exception as link_err:
+        print(f"⚠️  AI Transcribe {job_id}: MP restart linkback skipped: {link_err}")
+
+    source = {"local_audio_path": local_path}
+    threading.Thread(
+        target=run_ai_transcribe_pipeline,
+        args=(job_id, folder, source, lang),
+        daemon=True,
+    ).start()
+
+    return jsonify({
+        "success": True,
+        "message": "Audio uploaded — AI Transcribe pipeline restarting.",
+        "uploadedAudioName": safe_name,
+    }), 200
+
+
 @ai_transcribe_bp.route("/jobs/<job_id>", methods=["DELETE"])
 @jwt_required()
 def delete_job(job_id):

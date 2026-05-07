@@ -142,6 +142,7 @@ export const API_ENDPOINTS = {
     saveExtracted: (jobId: string) => `${API_BASE_URL}/api/v1/ai-transcribe/jobs/${jobId}/save-extracted`,
     sendToBulk: (jobId: string) => `${API_BASE_URL}/api/v1/ai-transcribe/jobs/${jobId}/send-to-bulk`,
     restartStep: (jobId: string, stepNumber: number) => `${API_BASE_URL}/api/v1/ai-transcribe/jobs/${jobId}/restart-step/${stepNumber}`,
+    uploadAudio: (jobId: string) => `${API_BASE_URL}/api/v1/ai-transcribe/jobs/${jobId}/upload-audio`,
   },
   voiceTyping: {
     list: `${API_BASE_URL}/api/v1/voice-typing/jobs`,
