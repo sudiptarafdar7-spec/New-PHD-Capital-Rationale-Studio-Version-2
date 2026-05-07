@@ -1,149 +1,147 @@
 """
 Step 1: Download Audio from YouTube Video
-PRIMARY: RapidAPI youtube-mp36 (100% tested in Google Colab)
-FALLBACK: yt-dlp with cookies and rotating clients
+PRIMARY: yt-dlp with cookies and rotating clients (free, no quota)
+FALLBACK: RapidAPI youtube-mp310 (paid, used only when yt-dlp fails)
 """
 import os
 import subprocess
 import requests
 import random
-import time
+from urllib.parse import quote
 from yt_dlp import YoutubeDL
 from backend.pipeline.fetch_video_data import extract_video_id
 from backend.utils.database import get_db_cursor
 
 
-def download_audio_rapidapi(video_id, audio_folder):
+def _get_rapidapi_key():
+    """Fetch the RapidAPI key from the api_keys table (provider =
+    'rapidapi_video_transcript', kept for backward compatibility with
+    keys saved before the youtube-mp36 → youtube-mp310 swap).
+    Returns the key string, or None if not configured."""
+    try:
+        with get_db_cursor() as cursor:
+            cursor.execute(
+                "SELECT key_value FROM api_keys WHERE provider = %s",
+                ('rapidapi_video_transcript',)
+            )
+            result = cursor.fetchone()
+            if result and result['key_value']:
+                return result['key_value']
+    except Exception as db_error:
+        print(f"⚠️ Database error fetching RapidAPI key: {db_error}")
+    return None
+
+
+def download_audio_rapidapi(youtube_url, audio_folder):
     """
-    PRIMARY METHOD: Download audio using RapidAPI youtube-mp36
-    
-    This method is 100% tested and working in Google Colab.
-    Uses innertube API through RapidAPI for reliable downloads.
-    
+    FALLBACK METHOD: Download audio via RapidAPI's youtube-mp310 endpoint.
+
+    Uses GET /download/mp3?url=<encoded YouTube URL> on
+    youtube-mp310.p.rapidapi.com. The first call returns a JSON body with
+    a session-bound `downloadUrl`; the actual MP3 is then streamed from
+    that URL. The downloadUrl is single-use, so if anything goes wrong
+    after fetching it we have to start over.
+
     Args:
-        video_id: YouTube video ID (11 characters)
-        audio_folder: Output directory for audio files
-    
+        youtube_url: Full YouTube URL (the API takes the URL, not the ID).
+        audio_folder: Output directory for audio files.
+
     Returns:
-        str: Path to downloaded MP3 file, or None if failed
+        str: Path to downloaded MP3 file, or None if failed.
     """
     print("\n" + "="*60)
-    print("🎯 PRIMARY METHOD: RapidAPI youtube-mp36")
+    print("🆘 FALLBACK METHOD: RapidAPI youtube-mp310")
     print("="*60)
-    
+
+    rapidapi_key = _get_rapidapi_key()
+    if not rapidapi_key:
+        print("❌ RapidAPI key not configured in database "
+              "(provider: rapidapi_video_transcript)")
+        print("   Add it under Admin → API Keys → RapidAPI to enable this fallback.")
+        return None
+
+    api_host = "youtube-mp310.p.rapidapi.com"
+    api_url = f"https://{api_host}/download/mp3"
+    headers = {
+        "x-rapidapi-key": rapidapi_key,
+        "x-rapidapi-host": api_host,
+    }
+
     try:
-        # Fetch RapidAPI key from database
-        rapidapi_key = None
-        try:
-            with get_db_cursor() as cursor:
-                cursor.execute("SELECT key_value FROM api_keys WHERE provider = %s", ('rapidapi_video_transcript',))
-                result = cursor.fetchone()
-                if result:
-                    rapidapi_key = result['key_value']
-        except Exception as db_error:
-            print(f"⚠️ Database error fetching API key: {db_error}")
-        
-        if not rapidapi_key:
-            print("❌ RapidAPI key not configured in database (provider: rapidapi_video_transcript)")
-            print("   Please add it in Settings → API Keys page")
-            return None
-        
-        # Step 1: Get MP3 download link from RapidAPI
-        api_url = "https://youtube-mp36.p.rapidapi.com/dl"
-        querystring = {"id": video_id}
-        
-        headers = {
-            "x-rapidapi-key": rapidapi_key,
-            "x-rapidapi-host": "youtube-mp36.p.rapidapi.com"
-        }
-        
-        print(f"📡 Requesting MP3 link for video ID: {video_id}")
-        
-        # Poll RapidAPI with retry logic (video processing can take time)
-        max_retries = 12  # 12 retries × 5 seconds = 1 minute max wait
-        retry_delay = 5   # Wait 5 seconds between retries
-        data = None
-        
-        for attempt in range(1, max_retries + 1):
-            response = requests.get(api_url, headers=headers, params=querystring, timeout=30)
-            response.raise_for_status()
-            
-            data = response.json()
-            status = data.get("status")
-            progress = data.get("progress", 0)
-            
-            # Success case: conversion complete
-            if status == "ok" and data.get("link"):
-                print(f"✅ API Response: {data}")
-                break
-            
-            # Processing case: video is being converted
-            elif status == "processing":
-                if attempt == 1:
-                    print(f"⏳ Video is being processed by RapidAPI (progress: {progress}%)")
-                    print(f"   Polling every {retry_delay} seconds (max {max_retries} attempts)...")
-                else:
-                    print(f"   Attempt {attempt}/{max_retries} - Progress: {progress}%")
-                
-                if attempt < max_retries:
-                    time.sleep(retry_delay)
-                    continue
-                else:
-                    raise Exception(f"Timeout: Video still processing after {max_retries * retry_delay} seconds. Progress: {progress}%. Try again in a few minutes.")
-            
-            # Error case: API returned error status
-            else:
-                raise Exception(f"API returned unexpected status. Response: {data}")
-        
-        # Final validation
-        if not data:
-            raise Exception("No response received from RapidAPI")
-        
-        if data.get("status") != "ok" or not data.get("link"):
-            raise Exception(f"API did not return a valid link after {max_retries} attempts. Response: {data}")
-        
-        mp3_url = data["link"]
-        title = data.get("title", "audio").replace("/", "_").replace("\\", "_").replace(":", "_")
-        
-        # Step 2: Download the MP3 file with proper headers
-        print(f"⏬ Downloading audio: {title}")
-        
-        download_headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0 Safari/537.36"
-            ),
-            "Referer": "https://youtube-mp36.p.rapidapi.com/",
-            "Accept": "*/*",
-            "Connection": "keep-alive",
-        }
-        
-        # Download with streaming to avoid corrupted files
-        output_path = os.path.join(audio_folder, "raw_audio.mp3")
-        
-        with requests.get(mp3_url, headers=download_headers, stream=True, 
-                         allow_redirects=True, timeout=300) as r:
-            r.raise_for_status()
-            
+        print(f"📡 Requesting download URL from {api_host} ...")
+        r = requests.get(
+            api_url,
+            params={"url": youtube_url},
+            headers=headers,
+            timeout=60,
+        )
+        r.raise_for_status()
+        payload = r.json()
+    except Exception as e:
+        print(f"❌ RapidAPI request failed: {e}")
+        return None
+
+    download_url = (
+        payload.get("downloadUrl")
+        or payload.get("download_url")
+        or payload.get("url")
+        or payload.get("link")
+    )
+    if not download_url:
+        print(f"❌ RapidAPI response missing downloadUrl. Body: {payload}")
+        return None
+
+    title = str(payload.get("title", "audio"))
+    for ch in ("/", "\\", ":"):
+        title = title.replace(ch, "_")
+    print(f"⏬ Streaming MP3: {title[:80]}")
+
+    output_path = os.path.join(audio_folder, "raw_audio.mp3")
+    download_headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0 Safari/537.36"
+        ),
+        "Accept": "*/*",
+        "Connection": "keep-alive",
+    }
+
+    try:
+        with requests.get(
+            download_url,
+            headers=download_headers,
+            stream=True,
+            allow_redirects=True,
+            timeout=600,
+        ) as resp:
+            resp.raise_for_status()
             with open(output_path, "wb") as f:
-                for chunk in r.iter_content(chunk_size=8192):
+                for chunk in resp.iter_content(chunk_size=8192):
                     if chunk:
                         f.write(chunk)
-        
-        # Verify file size (ensure it's not corrupted)
-        file_size = os.path.getsize(output_path)
-        if file_size < 1024:  # Less than 1KB is definitely corrupted
-            raise Exception(f"Downloaded file is corrupted (only {file_size} bytes)")
-        
-        print(f"✅ Download complete: {output_path}")
-        print(f"📦 File size: {round(file_size / (1024 * 1024), 2)} MB")
-        
-        return output_path
-        
     except Exception as e:
-        print(f"❌ RapidAPI method failed: {str(e)}")
+        print(f"❌ MP3 stream download failed: {e}")
+        # Clean up partial file
+        if os.path.exists(output_path):
+            try:
+                os.remove(output_path)
+            except OSError:
+                pass
         return None
+
+    file_size = os.path.getsize(output_path)
+    if file_size < 1024:
+        print(f"❌ Downloaded file is corrupted (only {file_size} bytes)")
+        try:
+            os.remove(output_path)
+        except OSError:
+            pass
+        return None
+
+    print(f"✅ RapidAPI download complete: {output_path} "
+          f"({round(file_size / (1024 * 1024), 2)} MB)")
+    return output_path
 
 
 def download_audio_ytdlp(youtube_url, audio_folder, cookies_file_path):
@@ -262,16 +260,17 @@ def download_audio_ytdlp(youtube_url, audio_folder, cookies_file_path):
 
 def download_audio(job_id, youtube_url, cookies_file=None):
     """
-    Master function to download YouTube audio with dual-method fallback
-    
-    PRIMARY: RapidAPI youtube-mp36 (fast, reliable, 100% tested)
-    FALLBACK: yt-dlp with cookies and rotating clients
-    
+    Master function to download YouTube audio with dual-method fallback.
+
+    PRIMARY: yt-dlp with cookies and rotating clients (free, no quota)
+    FALLBACK: RapidAPI youtube-mp310 (paid, used only if yt-dlp fails —
+              key required in api_keys.provider = 'rapidapi_video_transcript')
+
     Args:
         job_id: Job identifier
         youtube_url: YouTube video URL (supports all formats: regular, live, shorts, etc.)
         cookies_file: Optional (uses uploaded cookies if available)
-    
+
     Returns:
         dict: {
             'success': bool,
@@ -283,45 +282,45 @@ def download_audio(job_id, youtube_url, cookies_file=None):
         }
     """
     print("\n" + "="*60)
-    print("🎧 YOUTUBE AUDIO DOWNLOADER - DUAL-METHOD FALLBACK")
+    print("🎧 YOUTUBE AUDIO DOWNLOADER — yt-dlp PRIMARY, RapidAPI FALLBACK")
     print("="*60)
     print(f"📹 Video URL: {youtube_url}")
-    
+
     # Setup paths
     audio_folder = os.path.join("backend", "job_files", job_id, "audio")
     os.makedirs(audio_folder, exist_ok=True)
-    
+
     prepared_audio_path = os.path.join(audio_folder, "audio_16k_mono.wav")
     cookies_file_path = os.path.join("backend", "uploaded_files", "youtube_cookies.txt")
-    
+
+    # Validate URL early (cheap; helps both methods give a good error)
     try:
-        # Extract video ID from URL (supports all YouTube URL formats)
         print(f"\n🔍 Extracting video ID from URL...")
         video_id = extract_video_id(youtube_url)
         print(f"✅ Video ID: {video_id}")
-        
     except Exception as e:
         return {
             "success": False,
             "error": f"Failed to extract video ID: {str(e)}"
         }
-    
-    # Try PRIMARY method: RapidAPI
-    raw_audio_path = download_audio_rapidapi(video_id, audio_folder)
-    
-    # If primary failed, try FALLBACK method: yt-dlp
+
+    # Try PRIMARY method: yt-dlp
+    raw_audio_path = download_audio_ytdlp(youtube_url, audio_folder, cookies_file_path)
+
+    # If yt-dlp failed, fall back to RapidAPI
     if not raw_audio_path:
-        print("\n⚠️  PRIMARY method failed, switching to FALLBACK...")
-        raw_audio_path = download_audio_ytdlp(youtube_url, audio_folder, cookies_file_path)
-    
+        print("\n⚠️  yt-dlp failed, switching to RapidAPI fallback...")
+        raw_audio_path = download_audio_rapidapi(youtube_url, audio_folder)
+
     # If both methods failed
     if not raw_audio_path:
-        error_msg = "Both download methods failed (RapidAPI and yt-dlp)."
+        error_msg = "Both download methods failed (yt-dlp and RapidAPI youtube-mp310)."
         error_msg += "\n\n💡 Solutions:"
         error_msg += "\n   1. Upload fresh YouTube cookies (youtube_cookies.txt)"
-        error_msg += "\n   2. Try a different video"
-        error_msg += "\n   3. Check if video is age-restricted or private"
-        
+        error_msg += "\n   2. Add / refresh the RapidAPI key under Admin → API Keys"
+        error_msg += "\n   3. Try a different video"
+        error_msg += "\n   4. Check if video is age-restricted or private"
+
         return {"success": False, "error": error_msg}
     
     # Convert to 16kHz mono WAV for transcription

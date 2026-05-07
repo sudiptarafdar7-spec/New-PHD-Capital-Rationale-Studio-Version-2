@@ -45,7 +45,7 @@ TRANSCRIPT_ROOT = "backend/job_files/media_presence"
 
 AI_TRANSCRIBE_STEPS = [
     {"step_number": 1, "name": "Download Audio",
-     "description": "Download audio (RapidAPI / yt-dlp) and convert to 16 kHz mono WAV"},
+     "description": "Download audio (yt-dlp primary, RapidAPI fallback) and convert to 16 kHz mono WAV"},
     {"step_number": 2, "name": "Transcribe with AssemblyAI",
      "description": "Run AssemblyAI nano with speaker labels and the chosen language"},
     {"step_number": 3, "name": "Translate to English",
