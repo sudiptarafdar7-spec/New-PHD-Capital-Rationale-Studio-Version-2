@@ -1733,7 +1733,7 @@ export default function BulkRationalePage({ onNavigate, selectedJobId }: BulkRat
 
       {/* Edit Input Dialog */}
       <Dialog open={isEditInputOpen} onOpenChange={setIsEditInputOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
           <DialogHeader>
             <DialogTitle>Edit Input</DialogTitle>
             <DialogDescription>
@@ -1742,7 +1742,7 @@ export default function BulkRationalePage({ onNavigate, selectedJobId }: BulkRat
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4 py-2">
+          <div className="space-y-4 py-2 flex-1 min-h-0 overflow-y-auto pr-2">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="edit-channel">Channel *</Label>
@@ -1796,7 +1796,7 @@ export default function BulkRationalePage({ onNavigate, selectedJobId }: BulkRat
                 value={editInputText}
                 onChange={(e) => setEditInputText(e.target.value)}
                 rows={10}
-                className="font-mono"
+                className="font-mono min-h-[220px] max-h-[45vh] overflow-y-auto"
               />
             </div>
           </div>
