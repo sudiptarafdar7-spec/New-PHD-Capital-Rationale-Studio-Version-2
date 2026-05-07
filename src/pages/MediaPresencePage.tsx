@@ -246,11 +246,6 @@ export default function MediaPresencePage({ onNavigate }: Props) {
     setForm(f => ({ ...f, platform: fallback, channel_id: '' }));
   }, [openCreate, platformOptions]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const hasRunningJob = useMemo(
-    () => items.some(i => i.transcribe_status === 'started' || i.rationale_status === 'started'),
-    [items],
-  );
-
   const createEntry = async () => {
     if (!form.platform || !form.event_date || !form.event_time || !form.rationale_tool) {
       toast.error('Platform, date, time and rationale tool are required.');
@@ -471,7 +466,6 @@ export default function MediaPresencePage({ onNavigate }: Props) {
   const [filterOpen, setFilterOpen] = useState(false);
   const [fSearch, setFSearch] = useState('');         // free-text search w/ history
   const [fChannelId, setFChannelId] = useState<string>('all'); // channel dropdown
-  const [fPlatform, setFPlatform] = useState<string>('all');
   const [fDate, setFDate] = useState<string>('');
   const [fTime, setFTime] = useState<string>('');
   const [fTranscribe, setFTranscribe] = useState<string>('all');
@@ -528,37 +522,24 @@ export default function MediaPresencePage({ onNavigate }: Props) {
   useEffect(() => { loadSearchHistory(); /* eslint-disable-next-line */ }, []);
 
   const clearFilters = () => {
-    setFSearch(''); setFChannelId('all'); setFPlatform('all'); setFDate(''); setFTime('');
+    setFSearch(''); setFChannelId('all'); setFDate(''); setFTime('');
     setFTranscribe('all'); setFRationale('all');
   };
   const activeFilterCount = [
     fSearch.trim(),
     fChannelId !== 'all' ? fChannelId : '',
-    fPlatform !== 'all' ? fPlatform : '',
     fDate, fTime,
     fTranscribe !== 'all' ? fTranscribe : '',
     fRationale !== 'all' ? fRationale : '',
   ].filter(Boolean).length;
 
-  // Channels list for the dropdown — sorted by name, optionally narrowed to
-  // the selected platform so the picker doesn't drown the user in unrelated channels.
+  // Channels list for the dropdown — sorted by name. Shows ALL managed channels
+  // (no platform narrowing) since the platform filter has been removed.
   const channelOptions = useMemo(() => {
-    const list = channels.filter(c =>
-      fPlatform === 'all' || (c.platform || '').toLowerCase() === fPlatform
-    );
-    return list.slice().sort((a, b) =>
+    return channels.slice().sort((a, b) =>
       (a.channel_name || '').localeCompare(b.channel_name || '')
     );
-  }, [channels, fPlatform]);
-
-  // If the currently-picked channel is no longer in the (platform-filtered)
-  // option list, snap back to "all" to avoid a phantom filter.
-  useEffect(() => {
-    if (fChannelId === 'all') return;
-    if (!channelOptions.some(c => String(c.id) === fChannelId)) {
-      setFChannelId('all');
-    }
-  }, [channelOptions, fChannelId]);
+  }, [channels]);
 
   // Lookup: channel_id → channel record (for logo & name)
   const channelById = useMemo(() => {
@@ -573,7 +554,6 @@ export default function MediaPresencePage({ onNavigate }: Props) {
   const filteredItems = useMemo(() => {
     return items.filter(it => {
       if (fChannelId !== 'all' && String(it.channel_id || '') !== fChannelId) return false;
-      if (fPlatform !== 'all' && (it.platform || '').toLowerCase() !== fPlatform) return false;
       if (fDate && it.event_date !== fDate) return false;
       if (fTime && (it.event_time || '').slice(0, 5) !== fTime) return false;
       if (fTranscribe !== 'all' && it.transcribe_status !== fTranscribe) return false;
@@ -588,7 +568,7 @@ export default function MediaPresencePage({ onNavigate }: Props) {
       }
       return true;
     });
-  }, [items, fSearch, fChannelId, fPlatform, fDate, fTime, fTranscribe, fRationale, channelById]);
+  }, [items, fSearch, fChannelId, fDate, fTime, fTranscribe, fRationale, channelById]);
 
   // Stats summary
   const stats = useMemo(() => {
@@ -618,7 +598,7 @@ export default function MediaPresencePage({ onNavigate }: Props) {
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={loadItems} disabled={loading}>
-            <RefreshCw className={`w-4 h-4 mr-1.5 ${hasRunningJob ? 'animate-spin' : ''}`} /> Refresh
+            <RefreshCw className={`w-4 h-4 mr-1.5 ${loading ? 'animate-spin' : ''}`} /> Refresh
           </Button>
           <Button
             data-tour="mp-new-entry"
@@ -644,7 +624,7 @@ export default function MediaPresencePage({ onNavigate }: Props) {
         ].map(s => (
           <div key={s.label} className={`rounded-xl border bg-gradient-to-br ${s.bg} px-4 py-3 flex items-center gap-3`}>
             <div className={`w-9 h-9 rounded-lg bg-background/40 border border-border/40 flex items-center justify-center ${s.accent}`}>
-              <s.icon className={`w-4 h-4 ${s.label === 'Running' && stats.running > 0 ? 'animate-spin' : ''}`} />
+              <s.icon className="w-4 h-4" />
             </div>
             <div>
               <div className="text-xs uppercase tracking-wide text-muted-foreground">{s.label}</div>
@@ -658,10 +638,10 @@ export default function MediaPresencePage({ onNavigate }: Props) {
         <CardHeader className="border-b border-border/50 bg-card/40">
           <div className="flex items-start justify-between gap-3 flex-wrap">
             <div>
-              <CardTitle className="text-base">Today &amp; recent entries</CardTitle>
+              <CardTitle className="text-base">Media Presence Entries</CardTitle>
               <CardDescription>
-                Pick a transcribe method per row. Voice Typing and AI Transcribe feed into your
-                chosen rationale tool.
+                Manage all your media presence &amp; rationale at one place. Record Schedules,
+                Generate Transcriptions &amp; Generate Rationale using various AI tools.
               </CardDescription>
             </div>
             <Button
@@ -679,7 +659,7 @@ export default function MediaPresencePage({ onNavigate }: Props) {
           </div>
 
           {filterOpen && (
-            <div className="mt-3 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-2">
+            <div className="mt-3 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
               {/* Free-text search with history popover (mirrors Dashboard) */}
               <div className="col-span-2 lg:col-span-2">
                 <Popover open={historyOpen} onOpenChange={setHistoryOpen}>
@@ -783,7 +763,7 @@ export default function MediaPresencePage({ onNavigate }: Props) {
                     <SelectItem value="all">All channels</SelectItem>
                     {channelOptions.length === 0 ? (
                       <div className="px-3 py-2 text-xs text-muted-foreground">
-                        No channels {fPlatform !== 'all' ? 'for this platform' : 'found'}.
+                        No channels found.
                       </div>
                     ) : channelOptions.map(c => (
                       <SelectItem key={c.id} value={String(c.id)}>
@@ -805,17 +785,6 @@ export default function MediaPresencePage({ onNavigate }: Props) {
                 </Select>
               </div>
 
-              <Select value={fPlatform} onValueChange={setFPlatform}>
-                <SelectTrigger className="h-9"><SelectValue placeholder="Platform" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All platforms</SelectItem>
-                  {platformOptions.map(p => (
-                    <SelectItem key={p.value} value={p.value}>
-                      <span className="flex items-center gap-2">{platformIcon(p.value)}<span className="capitalize">{p.label}</span></span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
               <Input type="date" value={fDate} onChange={e => setFDate(e.target.value)} className="h-9 text-sm" />
               <Input type="time" value={fTime} onChange={e => setFTime(e.target.value)} className="h-9 text-sm" />
               <Select value={fTranscribe} onValueChange={setFTranscribe}>
@@ -839,7 +808,7 @@ export default function MediaPresencePage({ onNavigate }: Props) {
                 </SelectContent>
               </Select>
               {activeFilterCount > 0 && (
-                <Button size="sm" variant="ghost" onClick={clearFilters} className="h-9 col-span-2 lg:col-span-7 justify-self-end gap-1 text-muted-foreground hover:text-foreground">
+                <Button size="sm" variant="ghost" onClick={clearFilters} className="h-9 col-span-2 lg:col-span-6 justify-self-end gap-1 text-muted-foreground hover:text-foreground">
                   <X className="w-3.5 h-3.5" /> Clear filters
                 </Button>
               )}
@@ -879,7 +848,7 @@ export default function MediaPresencePage({ onNavigate }: Props) {
                   <th className="py-3 px-3 font-medium">Channel</th>
                   <th className="py-3 px-3 font-medium">Date · Time</th>
                   <th className="py-3 px-2 font-medium w-[110px]">Video</th>
-                  <th className="py-3 px-3 font-medium">Rationale Tool</th>
+                  <th className="py-3 px-3 font-medium">Method</th>
                   <th className="py-3 px-3 font-medium">Transcribe</th>
                   <th className="py-3 px-3 font-medium">Rationale</th>
                   <th className="py-3 px-3 font-medium">Output</th>
@@ -976,23 +945,25 @@ export default function MediaPresencePage({ onNavigate }: Props) {
                               onNavigate(page, jid);
                             }}
                             title={`Open ${item.transcribe_method?.replace('_', ' ') || 'transcribe'} job`}
-                            className="text-left hover:opacity-80 transition-opacity cursor-pointer">
-                            <StatusPill label={item.transcribe_status} kind={item.transcribe_status} />
-                            {item.transcribe_method && (
-                              <div className="text-[10px] text-primary mt-1.5 capitalize underline-offset-2 hover:underline">
-                                via {item.transcribe_method.replace('_', ' ')} →
-                              </div>
-                            )}
+                            className="text-left hover:opacity-80 transition-opacity cursor-pointer py-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <StatusPill label={item.transcribe_status} kind={item.transcribe_status} />
+                              {item.transcribe_method && (
+                                <span className="text-[11px] text-primary capitalize underline-offset-2 hover:underline">
+                                  via {item.transcribe_method.replace('_', ' ')} →
+                                </span>
+                              )}
+                            </div>
                           </button>
                         ) : (
-                          <>
+                          <div className="flex items-center gap-2 flex-wrap py-1">
                             <StatusPill label={item.transcribe_status} kind={item.transcribe_status} />
                             {item.transcribe_method && (
-                              <div className="text-[10px] text-muted-foreground mt-1.5 capitalize">
+                              <span className="text-[11px] text-muted-foreground capitalize">
                                 via {item.transcribe_method.replace('_', ' ')}
-                              </div>
+                              </span>
                             )}
-                          </>
+                          </div>
                         )}
                       </td>
                       <td className="py-3.5 px-3">
@@ -1059,10 +1030,10 @@ export default function MediaPresencePage({ onNavigate }: Props) {
         </CardContent>
       </Card>
 
-      {/* Video player popup — 16:9 */}
+      {/* Video player popup — 16:9, fits within viewport */}
       <Dialog open={videoOpen} onOpenChange={(o) => { setVideoOpen(o); if (!o) setVideoItem(null); }}>
-        <DialogContent className="max-w-4xl p-0 overflow-hidden bg-black border-border/50">
-          <DialogHeader className="px-5 py-3 bg-card border-b border-border/50">
+        <DialogContent className="max-w-4xl w-[95vw] max-h-[90vh] p-0 overflow-hidden bg-card border-border/50 flex flex-col">
+          <DialogHeader className="px-5 py-3 bg-card border-b border-border/50 shrink-0 pr-12">
             <DialogTitle className="flex items-center gap-2 text-base">
               {videoItem && platformIcon(videoItem.platform)}
               <span className="truncate">
@@ -1076,39 +1047,41 @@ export default function MediaPresencePage({ onNavigate }: Props) {
               </DialogDescription>
             )}
           </DialogHeader>
-          {videoItem?.video_url && (() => {
-            const embedSrc = ytEmbedUrl(videoItem.video_url);
-            if (embedSrc) {
+          <div className="flex-1 min-h-0 overflow-hidden bg-black flex items-center justify-center">
+            {videoItem?.video_url && (() => {
+              const embedSrc = ytEmbedUrl(videoItem.video_url);
+              if (embedSrc) {
+                return (
+                  <div className="w-full h-full max-h-full" style={{ aspectRatio: '16 / 9' }}>
+                    <iframe
+                      src={embedSrc}
+                      title="Video player"
+                      className="w-full h-full block"
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                      allowFullScreen
+                    />
+                  </div>
+                );
+              }
               return (
-                <div className="relative w-full bg-black" style={{ paddingTop: '56.25%' }}>
-                  <iframe
-                    src={embedSrc}
-                    title="Video player"
-                    className="absolute inset-0 w-full h-full"
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                    allowFullScreen
-                  />
+                <div className="w-full bg-slate-900 p-8 flex flex-col items-center justify-center gap-3 text-center">
+                  <ExternalLink className="w-6 h-6 text-amber-400" />
+                  <div className="text-sm text-muted-foreground max-w-md">
+                    This video can't be embedded inline (only YouTube videos can be played here). Open it in a new tab to watch.
+                  </div>
+                  <a
+                    href={videoItem.video_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-2 text-sm text-primary hover:underline break-all"
+                  >
+                    <ExternalLink className="w-4 h-4" /> Open video
+                  </a>
                 </div>
               );
-            }
-            return (
-              <div className="w-full bg-slate-900 p-8 flex flex-col items-center justify-center gap-3 text-center">
-                <ExternalLink className="w-6 h-6 text-amber-400" />
-                <div className="text-sm text-muted-foreground max-w-md">
-                  This video can't be embedded inline (only YouTube videos can be played here). Open it in a new tab to watch.
-                </div>
-                <a
-                  href={videoItem.video_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-2 text-sm text-primary hover:underline break-all"
-                >
-                  <ExternalLink className="w-4 h-4" /> Open video
-                </a>
-              </div>
-            );
-          })()}
-          <div className="px-5 py-2.5 bg-card border-t border-border/50 flex items-center justify-between gap-2">
+            })()}
+          </div>
+          <div className="px-5 py-2.5 bg-card border-t border-border/50 flex items-center justify-between gap-2 shrink-0">
             <a href={videoItem?.video_url || '#'} target="_blank" rel="noreferrer"
                className="text-xs text-muted-foreground hover:text-primary truncate">
               {videoItem?.video_url}
