@@ -12,12 +12,13 @@ import {
 } from '@/components/ui/dialog';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
 import { toast } from 'sonner';
 import {
   Radio, Plus, Mic, Sparkles, Wifi, Wand2, Download, RefreshCw, Trash2,
   Play, Loader2, CheckCircle2, AlertTriangle, Clock, Youtube, Tv,
   Facebook, Instagram, Send, MessageCircle, Calendar, Search as SearchIcon,
-  ExternalLink, Filter, X,
+  ExternalLink, Filter, X, History,
 } from 'lucide-react';
 import { getYouTubeEmbedUrl } from '@/lib/youtube-utils';
 
@@ -468,7 +469,8 @@ export default function MediaPresencePage({ onNavigate }: Props) {
 
   // ── Filter state ──────────────────────────────────────────────────────────
   const [filterOpen, setFilterOpen] = useState(false);
-  const [fSearch, setFSearch] = useState('');         // channel/platform name fuzzy
+  const [fSearch, setFSearch] = useState('');         // free-text search w/ history
+  const [fChannelId, setFChannelId] = useState<string>('all'); // channel dropdown
   const [fPlatform, setFPlatform] = useState<string>('all');
   const [fDate, setFDate] = useState<string>('');
   const [fTime, setFTime] = useState<string>('');
@@ -477,14 +479,86 @@ export default function MediaPresencePage({ onNavigate }: Props) {
   // Track logo URLs that failed to load so we can render the initials fallback.
   const [brokenLogos, setBrokenLogos] = useState<Set<string>>(new Set());
 
+  // Search history (mirrors Dashboard pattern — last 5 distinct queries per user).
+  const [searchHistory, setSearchHistory] = useState<{ query: string; last_used: string | null }[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const lastPersistedRef = useRef<string>('');
+
+  const loadSearchHistory = async () => {
+    try {
+      const r = await fetch(API_ENDPOINTS.mediaPresence.searchHistory, {
+        headers: getAuthHeaders(token || undefined),
+      });
+      if (r.ok) {
+        const j = await r.json();
+        setSearchHistory(j.history || []);
+      }
+    } catch { /* silent */ }
+  };
+  const persistSearchQuery = async (q: string) => {
+    const trimmed = q.trim();
+    if (!trimmed || lastPersistedRef.current === trimmed) return;
+    lastPersistedRef.current = trimmed;
+    try {
+      await fetch(API_ENDPOINTS.mediaPresence.searchHistory, {
+        method: 'POST',
+        headers: getAuthHeaders(token || undefined),
+        body: JSON.stringify({ query: trimmed }),
+      });
+      loadSearchHistory();
+    } catch { /* silent */ }
+  };
+  const removeHistoryItem = async (q: string) => {
+    try {
+      await fetch(`${API_ENDPOINTS.mediaPresence.searchHistory}?query=${encodeURIComponent(q)}`, {
+        method: 'DELETE', headers: getAuthHeaders(token || undefined),
+      });
+      loadSearchHistory();
+    } catch { /* silent */ }
+  };
+  const clearAllHistory = async () => {
+    try {
+      await fetch(API_ENDPOINTS.mediaPresence.searchHistory, {
+        method: 'DELETE', headers: getAuthHeaders(token || undefined),
+      });
+      loadSearchHistory();
+    } catch { /* silent */ }
+  };
+  useEffect(() => { loadSearchHistory(); /* eslint-disable-next-line */ }, []);
+
   const clearFilters = () => {
-    setFSearch(''); setFPlatform('all'); setFDate(''); setFTime('');
+    setFSearch(''); setFChannelId('all'); setFPlatform('all'); setFDate(''); setFTime('');
     setFTranscribe('all'); setFRationale('all');
   };
   const activeFilterCount = [
-    fSearch.trim(), fPlatform !== 'all' ? fPlatform : '', fDate, fTime,
-    fTranscribe !== 'all' ? fTranscribe : '', fRationale !== 'all' ? fRationale : '',
+    fSearch.trim(),
+    fChannelId !== 'all' ? fChannelId : '',
+    fPlatform !== 'all' ? fPlatform : '',
+    fDate, fTime,
+    fTranscribe !== 'all' ? fTranscribe : '',
+    fRationale !== 'all' ? fRationale : '',
   ].filter(Boolean).length;
+
+  // Channels list for the dropdown — sorted by name, optionally narrowed to
+  // the selected platform so the picker doesn't drown the user in unrelated channels.
+  const channelOptions = useMemo(() => {
+    const list = channels.filter(c =>
+      fPlatform === 'all' || (c.platform || '').toLowerCase() === fPlatform
+    );
+    return list.slice().sort((a, b) =>
+      (a.channel_name || '').localeCompare(b.channel_name || '')
+    );
+  }, [channels, fPlatform]);
+
+  // If the currently-picked channel is no longer in the (platform-filtered)
+  // option list, snap back to "all" to avoid a phantom filter.
+  useEffect(() => {
+    if (fChannelId === 'all') return;
+    if (!channelOptions.some(c => String(c.id) === fChannelId)) {
+      setFChannelId('all');
+    }
+  }, [channelOptions, fChannelId]);
 
   // Lookup: channel_id → channel record (for logo & name)
   const channelById = useMemo(() => {
@@ -498,6 +572,7 @@ export default function MediaPresencePage({ onNavigate }: Props) {
   // a row can never appear with a name the user can't find via search.
   const filteredItems = useMemo(() => {
     return items.filter(it => {
+      if (fChannelId !== 'all' && String(it.channel_id || '') !== fChannelId) return false;
       if (fPlatform !== 'all' && (it.platform || '').toLowerCase() !== fPlatform) return false;
       if (fDate && it.event_date !== fDate) return false;
       if (fTime && (it.event_time || '').slice(0, 5) !== fTime) return false;
@@ -508,12 +583,12 @@ export default function MediaPresencePage({ onNavigate }: Props) {
         const resolvedChannel = it.channel_name
           || (it.channel_id ? channelById.get(it.channel_id)?.channel_name : '')
           || '';
-        const hay = `${resolvedChannel} ${it.platform || ''}`.toLowerCase();
+        const hay = `${resolvedChannel} ${it.platform || ''} ${it.video_title || ''}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
     });
-  }, [items, fSearch, fPlatform, fDate, fTime, fTranscribe, fRationale, channelById]);
+  }, [items, fSearch, fChannelId, fPlatform, fDate, fTime, fTranscribe, fRationale, channelById]);
 
   // Stats summary
   const stats = useMemo(() => {
@@ -604,14 +679,132 @@ export default function MediaPresencePage({ onNavigate }: Props) {
           </div>
 
           {filterOpen && (
-            <div className="mt-3 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
-              <div className="col-span-2 lg:col-span-2 relative">
-                <SearchIcon className="w-3.5 h-3.5 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2" />
-                <Input
-                  placeholder="Search channel or platform…"
-                  value={fSearch} onChange={e => setFSearch(e.target.value)}
-                  className="h-9 pl-8 text-sm" />
+            <div className="mt-3 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-2">
+              {/* Free-text search with history popover (mirrors Dashboard) */}
+              <div className="col-span-2 lg:col-span-2">
+                <Popover open={historyOpen} onOpenChange={setHistoryOpen}>
+                  <div className="relative">
+                    <SearchIcon className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+                    <PopoverAnchor asChild>
+                      <Input
+                        ref={searchInputRef}
+                        placeholder="Search channel, platform or title…"
+                        value={fSearch}
+                        onChange={(e) => setFSearch(e.target.value)}
+                        onFocus={() => { if (searchHistory.length) setHistoryOpen(true); }}
+                        onClick={() => { if (searchHistory.length) setHistoryOpen(true); }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && fSearch.trim()) {
+                            persistSearchQuery(fSearch);
+                            setHistoryOpen(false);
+                          } else if (e.key === 'Escape') {
+                            setHistoryOpen(false);
+                          }
+                        }}
+                        onBlur={() => { if (fSearch.trim()) persistSearchQuery(fSearch); }}
+                        className="h-9 pl-8 pr-8 text-sm"
+                      />
+                    </PopoverAnchor>
+                    {fSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setFSearch('')}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-accent text-muted-foreground"
+                        aria-label="Clear search">
+                        <X className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
+                  <PopoverContent
+                    align="start"
+                    className="w-[--radix-popover-trigger-width] p-0"
+                    onOpenAutoFocus={(e: Event) => e.preventDefault()}
+                    onPointerDownOutside={(e: { target: EventTarget | null; preventDefault: () => void }) => {
+                      if (searchInputRef.current && e.target instanceof Node && searchInputRef.current.contains(e.target)) {
+                        e.preventDefault();
+                      }
+                    }}
+                    onFocusOutside={(e: { target: EventTarget | null; preventDefault: () => void }) => {
+                      if (searchInputRef.current && e.target instanceof Node && searchInputRef.current.contains(e.target)) {
+                        e.preventDefault();
+                      }
+                    }}
+                  >
+                    <div className="px-3 py-2 border-b border-border flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                        <History className="w-3.5 h-3.5" /> Recent searches
+                      </div>
+                      {searchHistory.length > 0 && (
+                        <button type="button"
+                          onMouseDown={(e) => { e.preventDefault(); clearAllHistory(); }}
+                          className="text-xs text-muted-foreground hover:text-foreground">
+                          Clear all
+                        </button>
+                      )}
+                    </div>
+                    {searchHistory.length === 0 ? (
+                      <div className="px-3 py-4 text-xs text-muted-foreground text-center">
+                        No recent searches yet — your last 5 will show here.
+                      </div>
+                    ) : (
+                      <ul className="py-1 max-h-72 overflow-auto">
+                        {searchHistory.map((h) => (
+                          <li key={h.query} className="group flex items-center justify-between gap-2 px-3 py-2 hover:bg-accent text-sm">
+                            <button type="button"
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                setFSearch(h.query);
+                                persistSearchQuery(h.query);
+                                setHistoryOpen(false);
+                              }}
+                              className="flex-1 text-left flex items-center gap-2 truncate">
+                              <SearchIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                              <span className="truncate text-foreground">{h.query}</span>
+                            </button>
+                            <button type="button"
+                              onMouseDown={(e) => { e.preventDefault(); removeHistoryItem(h.query); }}
+                              className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-background text-muted-foreground"
+                              aria-label="Remove from history">
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </PopoverContent>
+                </Popover>
               </div>
+
+              {/* Channel dropdown — populated from the channels database */}
+              <div className="col-span-2 lg:col-span-2">
+                <Select value={fChannelId} onValueChange={setFChannelId}>
+                  <SelectTrigger className="h-9"><SelectValue placeholder="Channel" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All channels</SelectItem>
+                    {channelOptions.length === 0 ? (
+                      <div className="px-3 py-2 text-xs text-muted-foreground">
+                        No channels {fPlatform !== 'all' ? 'for this platform' : 'found'}.
+                      </div>
+                    ) : channelOptions.map(c => (
+                      <SelectItem key={c.id} value={String(c.id)}>
+                        <span className="flex items-center gap-2">
+                          {c.logoPath && !brokenLogos.has(c.logoPath) ? (
+                            <img src={c.logoPath} alt="" className="w-4 h-4 rounded-sm object-cover"
+                              onError={() => setBrokenLogos(prev => {
+                                if (prev.has(c.logoPath!)) return prev;
+                                const next = new Set(prev); next.add(c.logoPath!); return next;
+                              })} />
+                          ) : (
+                            <span className="inline-flex">{platformIcon(c.platform)}</span>
+                          )}
+                          <span className="truncate max-w-[180px]">{c.channel_name}</span>
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
               <Select value={fPlatform} onValueChange={setFPlatform}>
                 <SelectTrigger className="h-9"><SelectValue placeholder="Platform" /></SelectTrigger>
                 <SelectContent>
@@ -626,7 +819,7 @@ export default function MediaPresencePage({ onNavigate }: Props) {
               <Input type="date" value={fDate} onChange={e => setFDate(e.target.value)} className="h-9 text-sm" />
               <Input type="time" value={fTime} onChange={e => setFTime(e.target.value)} className="h-9 text-sm" />
               <Select value={fTranscribe} onValueChange={setFTranscribe}>
-                <SelectTrigger className="h-9"><SelectValue placeholder="Transcribe status" /></SelectTrigger>
+                <SelectTrigger className="h-9"><SelectValue placeholder="Transcribe" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Any transcribe</SelectItem>
                   <SelectItem value="pending">Pending</SelectItem>
@@ -636,7 +829,7 @@ export default function MediaPresencePage({ onNavigate }: Props) {
                 </SelectContent>
               </Select>
               <Select value={fRationale} onValueChange={setFRationale}>
-                <SelectTrigger className="h-9"><SelectValue placeholder="Rationale status" /></SelectTrigger>
+                <SelectTrigger className="h-9"><SelectValue placeholder="Rationale" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Any rationale</SelectItem>
                   <SelectItem value="pending">Pending</SelectItem>
@@ -646,7 +839,7 @@ export default function MediaPresencePage({ onNavigate }: Props) {
                 </SelectContent>
               </Select>
               {activeFilterCount > 0 && (
-                <Button size="sm" variant="ghost" onClick={clearFilters} className="h-9 col-span-2 lg:col-span-6 justify-self-end gap-1 text-muted-foreground hover:text-foreground">
+                <Button size="sm" variant="ghost" onClick={clearFilters} className="h-9 col-span-2 lg:col-span-7 justify-self-end gap-1 text-muted-foreground hover:text-foreground">
                   <X className="w-3.5 h-3.5" /> Clear filters
                 </Button>
               )}

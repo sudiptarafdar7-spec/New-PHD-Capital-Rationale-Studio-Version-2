@@ -925,3 +925,133 @@ def get_transcript(media_id):
         "transcribe_status": entry.get("transcribe_status"),
         "transcribe_method": entry.get("transcribe_method"),
     }), 200
+
+
+# ---------------------------------------------------------------------------
+# Search history (per-user, last 5 distinct queries) — mirrors dashboard.
+# Used by the Media Presence filter bar's free-text search input.
+# ---------------------------------------------------------------------------
+
+def _ensure_mp_search_history_table():
+    """Create the per-user MP search-history table on demand (safe on existing installs)."""
+    with get_db_cursor(commit=True) as cursor:
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS media_presence_search_history (
+                id SERIAL PRIMARY KEY,
+                user_id VARCHAR(50) NOT NULL,
+                query TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_mpsh_user_time "
+            "ON media_presence_search_history(user_id, created_at DESC);"
+        )
+
+
+@media_presence_bp.route("/search-history", methods=["GET"])
+@jwt_required()
+def mp_get_search_history():
+    try:
+        user_id = get_jwt_identity()
+        _ensure_mp_search_history_table()
+        with get_db_cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT query, MAX(created_at) AS last_used
+                FROM media_presence_search_history
+                WHERE user_id = %s
+                GROUP BY query
+                ORDER BY last_used DESC
+                LIMIT 5
+                """,
+                (user_id,),
+            )
+            rows = cursor.fetchall() or []
+        return jsonify({
+            "history": [
+                {
+                    "query": r["query"],
+                    "last_used": r["last_used"].isoformat() if r.get("last_used") else None,
+                }
+                for r in rows
+            ]
+        }), 200
+    except Exception as e:
+        print(f"Error getting MP search history: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@media_presence_bp.route("/search-history", methods=["POST"])
+@jwt_required()
+def mp_add_search_history():
+    try:
+        user_id = get_jwt_identity()
+        data = request.get_json(silent=True) or {}
+        raw_query = data.get("query")
+        if not isinstance(raw_query, str):
+            return jsonify({"error": "query must be a string"}), 400
+        query = raw_query.strip()
+        if not query:
+            return jsonify({"error": "query is required"}), 400
+        if len(query) > 500:
+            query = query[:500]
+        _ensure_mp_search_history_table()
+        with get_db_cursor(commit=True) as cursor:
+            cursor.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                (f"mpsh:{user_id}",),
+            )
+            cursor.execute(
+                "DELETE FROM media_presence_search_history "
+                "WHERE user_id = %s AND LOWER(query) = LOWER(%s)",
+                (user_id, query),
+            )
+            cursor.execute(
+                "INSERT INTO media_presence_search_history (user_id, query) VALUES (%s, %s)",
+                (user_id, query),
+            )
+            cursor.execute(
+                """
+                DELETE FROM media_presence_search_history
+                WHERE user_id = %s
+                  AND id NOT IN (
+                    SELECT id FROM media_presence_search_history
+                    WHERE user_id = %s
+                    ORDER BY created_at DESC
+                    LIMIT 5
+                  )
+                """,
+                (user_id, user_id),
+            )
+        return jsonify({"ok": True}), 200
+    except Exception as e:
+        print(f"Error adding MP search history: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@media_presence_bp.route("/search-history", methods=["DELETE"])
+@jwt_required()
+def mp_clear_search_history():
+    try:
+        user_id = get_jwt_identity()
+        query = (request.args.get("query") or "").strip()
+        _ensure_mp_search_history_table()
+        with get_db_cursor(commit=True) as cursor:
+            if query:
+                cursor.execute(
+                    "DELETE FROM media_presence_search_history "
+                    "WHERE user_id = %s AND LOWER(query) = LOWER(%s)",
+                    (user_id, query),
+                )
+            else:
+                cursor.execute(
+                    "DELETE FROM media_presence_search_history WHERE user_id = %s",
+                    (user_id,),
+                )
+        return jsonify({"ok": True}), 200
+    except Exception as e:
+        print(f"Error clearing MP search history: {e}")
+        return jsonify({"error": str(e)}), 500

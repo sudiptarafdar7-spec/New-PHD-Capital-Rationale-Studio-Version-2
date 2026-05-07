@@ -183,6 +183,7 @@ export const API_ENDPOINTS = {
     startAuto: (id: number) => `${API_BASE_URL}/api/v1/media-presence/${id}/start-auto`,
     syncStatus: (id: number) => `${API_BASE_URL}/api/v1/media-presence/${id}/sync-status`,
     transcript: (id: number) => `${API_BASE_URL}/api/v1/media-presence/${id}/transcript`,
+    searchHistory: `${API_BASE_URL}/api/v1/media-presence/search-history`,
   },
 };
 
