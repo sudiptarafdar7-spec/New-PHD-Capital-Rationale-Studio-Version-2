@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   LayoutDashboard, 
   Video, 
@@ -23,7 +23,8 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../lib/auth-context';
 import { cn } from './ui/utils';
-import logo from '../assets/phd-logo.webp';
+import { API_ENDPOINTS } from '../lib/api-config';
+import defaultLogo from '../assets/phd-logo.webp';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 
 interface SidebarProps {
@@ -49,7 +50,43 @@ interface NavSection {
 }
 
 export default function Sidebar({ isOpen, onClose, currentPage, onNavigate, isCollapsed = false, onToggleCollapse }: SidebarProps) {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
+  const [logoSrc, setLogoSrc] = useState<string>(defaultLogo);
+
+  // Pull the company logo uploaded under Upload Files → Company Logo
+  // and use it as the sidebar brand logo. Falls back to the bundled PHD
+  // Capital logo if no upload exists or the fetch fails.
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    let objectUrl: string | null = null;
+    (async () => {
+      try {
+        const listRes = await fetch(API_ENDPOINTS.uploadedFiles.getAll, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!listRes.ok) return;
+        const data = await listRes.json();
+        const companyLogo = Array.isArray(data)
+          ? data.find((f: any) => f.file_type === 'companyLogo')
+          : null;
+        if (!companyLogo?.id) return;
+        const fileRes = await fetch(API_ENDPOINTS.uploadedFiles.download(companyLogo.id), {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!fileRes.ok) return;
+        const blob = await fileRes.blob();
+        objectUrl = URL.createObjectURL(blob);
+        if (!cancelled) setLogoSrc(objectUrl);
+      } catch {
+        /* keep default logo */
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [token]);
   const isAdmin = user?.role === 'admin';
 
   const navSections: NavSection[] = [
@@ -184,7 +221,7 @@ export default function Sidebar({ isOpen, onClose, currentPage, onNavigate, isCo
           {!isCollapsed && (
             <div className="flex items-center gap-3 w-full">
               <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-lg p-2 shrink-0">
-                <img src={logo} alt="PHD Capital" className="h-6 w-auto" />
+                <img src={logoSrc} alt="Company logo" className="h-6 w-auto object-contain" />
               </div>
               <div className="lg:block hidden min-w-0">
                 <h2 className="text-foreground font-medium text-sm truncate">Rationale Studio</h2>
@@ -194,7 +231,7 @@ export default function Sidebar({ isOpen, onClose, currentPage, onNavigate, isCo
           
           {isCollapsed && (
             <div className="lg:flex hidden bg-gradient-to-br from-slate-900 to-slate-800 rounded-lg p-2">
-              <img src={logo} alt="PHD Capital" className="h-6 w-auto" />
+              <img src={logoSrc} alt="Company logo" className="h-6 w-auto object-contain" />
             </div>
           )}
 
