@@ -874,9 +874,9 @@ export default function MediaPresencePage({ onNavigate }: Props) {
                   const channelDisplayName = item.channel_name || ch?.channel_name || '—';
                   return (
                     <tr key={item.id}
-                        className="border-b border-border/30 align-middle hover:bg-muted/10 transition-colors h-24">
+                        className="border-b border-border/30 align-middle hover:bg-muted/10 transition-colors">
                       {/* Platform: icon + name */}
-                      <td className="py-6 px-4">
+                      <td className="py-4 px-4">
                         <div className="flex items-center gap-2.5">
                           <div className="w-9 h-9 rounded-lg bg-muted/30 border border-border/40 flex items-center justify-center shrink-0">
                             {platformIcon(item.platform)}
@@ -887,7 +887,7 @@ export default function MediaPresencePage({ onNavigate }: Props) {
                         </div>
                       </td>
                       {/* Channel: uploaded logo + name */}
-                      <td className="py-6 px-3">
+                      <td className="py-4 px-3">
                         <div className="flex items-center gap-2.5 min-w-[160px]">
                           {channelLogoUrl && !brokenLogos.has(channelLogoUrl) ? (
                             <img
@@ -911,12 +911,12 @@ export default function MediaPresencePage({ onNavigate }: Props) {
                           </div>
                         </div>
                       </td>
-                      <td className="py-6 px-3 whitespace-nowrap">
+                      <td className="py-4 px-3 whitespace-nowrap">
                         <div className="font-medium text-foreground">{item.event_date}</div>
                         <div className="text-xs text-muted-foreground">{item.event_time}</div>
                       </td>
                       {/* Video: just a Play button, no title */}
-                      <td className="py-6 px-2 w-[110px]">
+                      <td className="py-4 px-2 w-[110px]">
                         {item.video_url ? (
                           <Button size="sm" variant="outline"
                                   onClick={() => openVideo(item)}
@@ -928,12 +928,12 @@ export default function MediaPresencePage({ onNavigate }: Props) {
                           <span className="text-muted-foreground text-xs">—</span>
                         )}
                       </td>
-                      <td className="py-6 px-3">
+                      <td className="py-4 px-3">
                         <Badge variant="outline" className="font-normal bg-card/60">
                           {RATIONALE_TOOL_LABEL[item.rationale_tool]}
                         </Badge>
                       </td>
-                      <td className="py-6 px-3">
+                      <td className="py-4 px-3">
                         {item.linked_transcribe_job_id ? (
                           <button
                             type="button"
@@ -966,7 +966,7 @@ export default function MediaPresencePage({ onNavigate }: Props) {
                           </div>
                         )}
                       </td>
-                      <td className="py-6 px-3">
+                      <td className="py-4 px-3">
                         <StatusPill label={item.rationale_status} kind={item.rationale_status} />
                         {item.rationale_job_id && (
                           <div className="text-[10px] text-muted-foreground mt-1.5 truncate max-w-[140px] font-mono">
@@ -974,7 +974,7 @@ export default function MediaPresencePage({ onNavigate }: Props) {
                           </div>
                         )}
                       </td>
-                      <td className="py-6 px-3">
+                      <td className="py-4 px-3">
                         {item.output_pdf_path ? (
                           <Button size="sm" variant="outline" onClick={() => downloadPdf(item)} className="h-8">
                             <Download className="w-3 h-3 mr-1" /> PDF
@@ -983,7 +983,7 @@ export default function MediaPresencePage({ onNavigate }: Props) {
                           <span className="text-muted-foreground text-xs">—</span>
                         )}
                       </td>
-                      <td className="py-6 px-4">
+                      <td className="py-4 px-4">
                         <div className="flex flex-wrap gap-1.5 justify-end">
                           {canVoiceOrAI && (
                             <>
