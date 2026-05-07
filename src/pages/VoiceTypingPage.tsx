@@ -970,7 +970,12 @@ export default function VoiceTypingPage({ onNavigate, mediaId, voiceJobId }: Pro
           : 'space-y-4'
       }>
         {(!isJobMode || !!job?.videoUrl) && (
-          <div>
+          // `lg:self-start` stops this grid cell from stretching to the
+          // row height set by the (much taller) Transcript column on the
+          // right — without it, the cell stretched and the sticky Card's
+          // visible bottom border ran way past the iframe, leaving a big
+          // empty rectangle below the player.
+          <div className="lg:self-start">
             <Card className="lg:sticky lg:top-4">
               <CardHeader>
                 <CardTitle>Video</CardTitle>
