@@ -483,18 +483,38 @@ export default function MediaPresencePage({ onNavigate }: Props) {
     const map: Record<string, string> = {
       pending: 'bg-slate-700/40 text-slate-300 border-slate-600/60',
       started: 'bg-blue-600/15 text-blue-300 border-blue-500/40',
+      transcribing: 'bg-blue-600/15 text-blue-300 border-blue-500/40',
+      translating: 'bg-blue-600/15 text-blue-300 border-blue-500/40',
+      extracting: 'bg-blue-600/15 text-blue-300 border-blue-500/40',
+      review_transcript: 'bg-amber-500/15 text-amber-300 border-amber-500/40',
+      review_translation: 'bg-amber-500/15 text-amber-300 border-amber-500/40',
+      review_extract: 'bg-amber-500/15 text-amber-300 border-amber-500/40',
       completed: 'bg-emerald-600/15 text-emerald-300 border-emerald-500/40',
       done: 'bg-emerald-600/15 text-emerald-300 border-emerald-500/40',
+      signed: 'bg-emerald-600/15 text-emerald-300 border-emerald-500/40',
       failed: 'bg-rose-600/15 text-rose-300 border-rose-500/40',
     };
-    const Icon = kind === 'started' ? Loader2
+    const labelMap: Record<string, string> = {
+      transcribing: 'Transcribing',
+      translating: 'Translating',
+      extracting: 'Extracting',
+      review_transcript: 'Review Transcript',
+      review_translation: 'Review Translation',
+      review_extract: 'Review Extract',
+    };
+    const spinning = ['started', 'transcribing', 'translating', 'extracting'].includes(kind);
+    const isReview = kind.startsWith('review_');
+    const isDone = kind === 'completed' || kind === 'done' || kind === 'signed';
+    const Icon = spinning ? Loader2
       : kind === 'failed' ? AlertTriangle
-      : (kind === 'completed' || kind === 'done') ? CheckCircle2
+      : isDone ? CheckCircle2
+      : isReview ? Clock
       : Clock;
+    const displayLabel = labelMap[kind] || label;
     return (
       <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${map[kind] || map.pending}`}>
-        <Icon className={`w-3 h-3 ${kind === 'started' ? 'animate-spin' : ''}`} />
-        <span className="capitalize">{label}</span>
+        <Icon className={`w-3 h-3 ${spinning ? 'animate-spin' : ''}`} />
+        <span className="capitalize">{displayLabel}</span>
       </span>
     );
   };
@@ -619,7 +639,11 @@ export default function MediaPresencePage({ onNavigate }: Props) {
     return {
       total: items.length,
       today: items.filter(i => i.event_date === today).length,
-      running: items.filter(i => i.transcribe_status === 'started' || i.rationale_status === 'started').length,
+      running: items.filter(i => {
+        const t = i.transcribe_status;
+        const transcribeBusy = t !== 'pending' && t !== 'completed' && t !== 'failed';
+        return transcribeBusy || i.rationale_status === 'started';
+      }).length,
       done: items.filter(i => i.rationale_status === 'done').length,
     };
   }, [items]);
@@ -901,10 +925,14 @@ export default function MediaPresencePage({ onNavigate }: Props) {
               <tbody>
                 {filteredItems.map(item => {
                   const acting = actingId === item.id;
+                  // Voice/AI Transcribe buttons only appear when no transcribe
+                  // job is in flight at all. Anything other than pending/failed
+                  // (started, transcribing, review_*, translating, extracting,
+                  // completed) means we already have a transcribe job — don't
+                  // let the user spawn a duplicate one mid-pipeline.
                   const canVoiceOrAI =
                     item.rationale_tool !== 'media_rationale' &&
-                    item.transcribe_status !== 'started' &&
-                    item.transcribe_status !== 'completed';
+                    (item.transcribe_status === 'pending' || item.transcribe_status === 'failed');
                   // Voice Typing's only downstream is Bulk Rationale, so we
                   // gate the button to bulk_rationale entries.
                   const canVoice = canVoiceOrAI && item.rationale_tool === 'bulk_rationale';

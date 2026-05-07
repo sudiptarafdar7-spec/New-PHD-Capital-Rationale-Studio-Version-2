@@ -32,6 +32,7 @@ from backend.services.ai_transcribe_service import (
     run_ai_transcribe_pipeline,
     run_translate_step,
     run_extract_step,
+    TOTAL_STEPS,
     spawn_bulk_from_extracted,
     load_job_transcript,
 )
@@ -667,6 +668,139 @@ def download_transcript(job_id):
         download_name=f"transcript-{job_id}.txt",
         mimetype="text/plain; charset=utf-8",
     )
+
+
+@ai_transcribe_bp.route("/jobs/<job_id>/restart-step/<int:step_number>", methods=["POST"])
+@jwt_required()
+def restart_step(job_id, step_number):
+    """Re-run any AI Transcribe step from scratch.
+
+    • Steps 1 or 2 → re-download + re-transcribe (the pair always run together).
+    • Step 3 → re-translate using payload.transcript_text.
+    • Step 4 → re-extract using payload.translated_text.
+    • Step 5 → re-spawn Bulk Rationale child using payload.extracted_text.
+
+    Mirrors the Bulk Rationale /restart-step pattern: resets all steps from
+    the chosen step onward to 'pending', flips the parent job back to a
+    running status, and kicks off the matching background worker thread.
+    """
+    user_id = get_jwt_identity()
+    job, err = _check_job_access(job_id, user_id)
+    if err:
+        return jsonify({"error": err[0]}), err[1]
+
+    if step_number < 1 or step_number > TOTAL_STEPS:
+        return jsonify({"error": f"step_number must be 1..{TOTAL_STEPS}"}), 400
+
+    payload = _payload_dict(job)
+    folder = job.get("folder_path") or f"backend/job_files/{job_id}"
+
+    # Validate prerequisites for steps that consume earlier outputs.
+    transcript_text = (payload.get("transcript_text") or "").strip()
+    translated_text = (payload.get("translated_text") or "").strip()
+    extracted_text  = (payload.get("extracted_text")  or "").strip()
+
+    if step_number == 3 and not transcript_text:
+        return jsonify({"error": "Cannot restart Translate — no reviewed transcript yet."}), 400
+    if step_number == 4 and not translated_text:
+        return jsonify({"error": "Cannot restart Extract — no reviewed translation yet."}), 400
+    if step_number == 5 and not extracted_text:
+        return jsonify({"error": "Cannot restart Send-to-Bulk — no extracted text yet."}), 400
+    if step_number == 5 and (not job.get("channel_id") or not job.get("date")):
+        return jsonify({
+            "error": "Channel and date are required to spawn a Bulk Rationale job.",
+        }), 400
+
+    # Choose the running status the parent should sit in while the chosen
+    # step (or its pair) executes.
+    new_status = {
+        1: "processing",
+        2: "processing",
+        3: "translating",
+        4: "extracting",
+        5: "bulk_started",
+    }[step_number]
+
+    # Reset every step from `step_number` onward to pending so the dashboard
+    # progress UI re-animates them. Bump the parent back to current_step-1
+    # so the running step shows as in-flight (matching Bulk's contract).
+    with get_db_cursor(commit=True) as cursor:
+        cursor.execute(
+            """UPDATE job_steps
+               SET status='pending', message=NULL, started_at=NULL, ended_at=NULL,
+                   output_files='{}'
+               WHERE job_id=%s AND step_number >= %s""",
+            (job_id, step_number),
+        )
+        cursor.execute(
+            """UPDATE jobs
+               SET status=%s, current_step=%s, progress=%s, updated_at=%s
+               WHERE id=%s""",
+            (new_status, max(step_number - 1, 0),
+             int(((step_number - 1) / TOTAL_STEPS) * 100),
+             datetime.now(), job_id),
+        )
+
+    # Dispatch the right background worker.
+    if step_number in (1, 2):
+        # Re-build source kwargs from the parent job row.
+        source = {}
+        if job.get("youtube_url"):
+            source["youtube_url"] = job["youtube_url"]
+        else:
+            existing = os.path.join(folder, "audio", "audio_16k_mono.wav")
+            if os.path.exists(existing):
+                source["local_audio_path"] = existing
+            else:
+                return jsonify({
+                    "error": "No YouTube URL or local audio found to re-download from.",
+                }), 400
+        lang = payload.get("language_code") or "hi"
+        threading.Thread(
+            target=run_ai_transcribe_pipeline,
+            args=(job_id, folder, source, lang),
+            daemon=True,
+        ).start()
+    elif step_number == 3:
+        threading.Thread(
+            target=run_translate_step,
+            args=(job_id, transcript_text, folder),
+            daemon=True,
+        ).start()
+    elif step_number == 4:
+        threading.Thread(
+            target=run_extract_step,
+            args=(job_id, translated_text, folder),
+            daemon=True,
+        ).start()
+    elif step_number == 5:
+        from backend.services.ai_transcribe_service import spawn_bulk_from_extracted
+        channel_id = job["channel_id"]
+        call_date  = job["date"]
+        call_time  = job.get("time") or "00:00:00"
+        title      = job.get("title") or job_id
+        youtube_url = job.get("youtube_url") or ""
+        def _safe_respawn():
+            try:
+                spawn_bulk_from_extracted(
+                    job_id, user_id, extracted_text,
+                    channel_id, call_date, call_time, title,
+                    youtube_url=youtube_url,
+                )
+            except Exception as spawn_err:
+                print(f"❌ AI Transcribe {job_id} re-spawn failed: {spawn_err}")
+                with get_db_cursor(commit=True) as c:
+                    c.execute(
+                        """UPDATE jobs SET status='awaiting_extract_review',
+                           updated_at=%s WHERE id=%s""",
+                        (datetime.now(), job_id),
+                    )
+        threading.Thread(target=_safe_respawn, daemon=True).start()
+
+    return jsonify({
+        "success": True,
+        "message": f"Restarting from step {step_number}",
+    }), 202
 
 
 @ai_transcribe_bp.route("/jobs/<job_id>", methods=["DELETE"])

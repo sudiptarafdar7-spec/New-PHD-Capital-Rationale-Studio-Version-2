@@ -340,7 +340,7 @@ def init_database():
                 video_title TEXT,
                 rationale_tool VARCHAR(40) NOT NULL CHECK (rationale_tool IN ('bulk_rationale', 'media_rationale')),
                 transcribe_method VARCHAR(30) CHECK (transcribe_method IN ('voice_typing', 'ai_transcribe', 'auto', 'live_transcribe')),
-                transcribe_status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (transcribe_status IN ('pending', 'started', 'completed', 'failed')),
+                transcribe_status VARCHAR(30) NOT NULL DEFAULT 'pending' CHECK (transcribe_status IN ('pending', 'started', 'transcribing', 'review_transcript', 'translating', 'review_translation', 'extracting', 'review_extract', 'completed', 'failed')),
                 transcript_text TEXT,
                 transcript_file_path TEXT,
                 rationale_status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (rationale_status IN ('pending', 'started', 'done', 'failed')),
@@ -368,6 +368,30 @@ def init_database():
                     ALTER TABLE media_presence DROP CONSTRAINT media_presence_transcribe_method_check;
                     ALTER TABLE media_presence ADD CONSTRAINT media_presence_transcribe_method_check
                         CHECK (transcribe_method IN ('voice_typing', 'ai_transcribe', 'auto', 'live_transcribe'));
+                END IF;
+            END $$;
+        """)
+
+        # Idempotent upgrade: widen transcribe_status enum to include the
+        # AI Transcribe granular sub-states (transcribing, review_transcript,
+        # translating, review_translation, extracting, review_extract). The
+        # original CHECK was {pending,started,completed,failed} which would
+        # reject the new values mid-pipeline.
+        cursor.execute("""
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'media_presence_transcribe_status_check'
+                    AND contype = 'c'
+                    AND NOT pg_get_constraintdef(oid) LIKE '%review_translation%'
+                ) THEN
+                    ALTER TABLE media_presence DROP CONSTRAINT media_presence_transcribe_status_check;
+                    ALTER TABLE media_presence ALTER COLUMN transcribe_status TYPE VARCHAR(30);
+                    ALTER TABLE media_presence ADD CONSTRAINT media_presence_transcribe_status_check
+                        CHECK (transcribe_status IN ('pending', 'started', 'transcribing',
+                            'review_transcript', 'translating', 'review_translation',
+                            'extracting', 'review_extract', 'completed', 'failed'));
                 END IF;
             END $$;
         """)

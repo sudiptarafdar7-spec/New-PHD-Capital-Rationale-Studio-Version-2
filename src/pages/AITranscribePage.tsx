@@ -19,7 +19,7 @@ import { toast } from 'sonner';
 import {
   Sparkles, Save, ArrowLeft, Loader2, Upload, Info, Copy, Download,
   CheckCircle2, AlertTriangle, Mic2, Circle, XCircle, ListChecks, Trash2,
-  Languages, Filter, Send, RefreshCw, Plus, ArrowRight, ExternalLink,
+  Languages, Filter, Send, RefreshCw, RotateCcw, Plus, ArrowRight, ExternalLink,
   Calendar, Clock, Youtube, Facebook, Instagram, MessageCircle, Globe,
   Send as TgIcon,
 } from 'lucide-react';
@@ -184,6 +184,8 @@ export default function AITranscribePage({ onNavigate, mediaId, selectedJobId }:
   const [editTranslated, setEditTranslated] = useState('');
   const [editExtracted, setEditExtracted] = useState('');
   const [savingStage, setSavingStage] = useState<'' | 'transcript' | 'translated' | 'extracted' | 'bulk'>('');
+  const [selectedRestartStep, setSelectedRestartStep] = useState<number>(1);
+  const [isRestarting, setIsRestarting] = useState(false);
   // Track the last status we hydrated edit-fields from so editor changes
   // are NOT clobbered by 3-second polls.
   const lastHydratedStatusRef = useRef<string>('');
@@ -465,6 +467,29 @@ export default function AITranscribePage({ onNavigate, mediaId, selectedJobId }:
       toast.error(e.message);
     } finally {
       setSavingStage('');
+    }
+  };
+
+  const handleRestartStep = async (stepNumber: number) => {
+    if (!job) return;
+    if (!confirm(`Re-run from Step ${stepNumber}? Steps after this will be reset.`)) return;
+    setIsRestarting(true);
+    try {
+      const r = await fetch(API_ENDPOINTS.aiTranscribe.restartStep(job.jobId, stepNumber), {
+        method: 'POST',
+        headers: getAuthHeaders(token || undefined),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'Failed to restart step');
+      toast.success(`Restarting from Step ${stepNumber}`);
+      // Force a re-hydration when status next changes.
+      lastHydratedStatusRef.current = '';
+      stopPoll();
+      pollRef.current = setInterval(() => fetchJob(job.jobId), 3000);
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setIsRestarting(false);
     }
   };
 
@@ -1026,7 +1051,7 @@ export default function AITranscribePage({ onNavigate, mediaId, selectedJobId }:
       {/* ---------- Job-view (steps + per-stage editor) ---------- */}
       {mode === 'job-view' && job && (
         <>
-          {/* Progress bar */}
+          {/* Progress bar with restart-step selector */}
           <div className="space-y-2">
             <div className="flex items-center justify-between text-xs text-muted-foreground">
               <span>
@@ -1034,7 +1059,40 @@ export default function AITranscribePage({ onNavigate, mediaId, selectedJobId }:
               </span>
               <span>{job.progress}%</span>
             </div>
-            <Progress value={job.progress} className="h-2" />
+            <div className="flex items-center gap-3">
+              <div className="flex-1"><Progress value={job.progress} className="h-2" /></div>
+              <div className="flex items-center gap-2">
+                <Select
+                  value={selectedRestartStep.toString()}
+                  onValueChange={(value) => setSelectedRestartStep(parseInt(value, 10))}
+                  disabled={isRestarting}
+                >
+                  <SelectTrigger className="w-[110px] h-8 text-xs">
+                    <SelectValue placeholder="Step" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(job.steps || []).map((step) => (
+                      <SelectItem key={step.step_number} value={step.step_number.toString()}>
+                        Step {step.step_number}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  onClick={() => handleRestartStep(selectedRestartStep)}
+                  disabled={isRestarting}
+                  variant="outline"
+                  size="sm"
+                  className="h-8 px-3"
+                  title={`Re-run from step ${selectedRestartStep}`}
+                >
+                  {isRestarting
+                    ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    : <RotateCcw className="w-3.5 h-3.5" />}
+                  <span className="ml-1.5 text-xs">Re-run</span>
+                </Button>
+              </div>
+            </div>
           </div>
 
           {/* Steps + active editor grid */}

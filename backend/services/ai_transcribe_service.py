@@ -311,6 +311,7 @@ def run_ai_transcribe_pipeline(job_id, job_folder, source, language_code="hi"):
                 payload_patch={"transcript_text": text, "transcript_file": txt_path},
             )
 
+        _mp_linkback_stage(job_id, "awaiting_review")
         print(f"⏸  AI Transcribe {job_id} parked at awaiting_review ({len(text):,} chars)")
 
     except Exception as exc:
@@ -336,6 +337,52 @@ def run_ai_transcribe_pipeline(job_id, job_folder, source, language_code="hi"):
         # row, mirror the failure on that row so its Transcribe pill flips from
         # 'started' to 'failed' instead of getting stuck on the spinner.
         _mp_linkback_failed(job_id, err)
+
+
+_AI_STAGE_TO_MP = {
+    "processing": "transcribing",
+    "awaiting_review": "review_transcript",
+    "translating": "translating",
+    "awaiting_translate_review": "review_translation",
+    "extracting": "extracting",
+    "awaiting_extract_review": "review_extract",
+    "bulk_started": "completed",
+    "completed": "completed",
+}
+
+
+def _mp_linkback_stage(job_id, ai_status):
+    """Mirror an AI Transcribe job's intermediate stage onto its linked
+    media_presence row's transcribe_status. Lets the MP table show the
+    granular sub-state (Review Translation, Extracting, etc.) instead of
+    a generic 'started' that never moves until completion."""
+    mp_status = _AI_STAGE_TO_MP.get(ai_status)
+    if not mp_status:
+        return
+    try:
+        with get_db_cursor(commit=True) as cursor:
+            cursor.execute("SELECT payload FROM jobs WHERE id = %s", (job_id,))
+            row = cursor.fetchone()
+            if not row:
+                return
+            payload = row.get("payload") or {}
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except Exception:
+                    payload = {}
+            mp_id = payload.get("media_presence_id")
+            if not mp_id:
+                return
+            cursor.execute(
+                """UPDATE media_presence
+                   SET transcribe_status = %s,
+                       updated_at = %s
+                   WHERE id = %s""",
+                (mp_status, datetime.now(), mp_id),
+            )
+    except Exception as link_err:
+        print(f"⚠️  AI Transcribe {job_id}: MP stage linkback skipped: {link_err}")
 
 
 def _mp_linkback_failed(job_id, err_msg):
@@ -371,22 +418,66 @@ def _mp_linkback_failed(job_id, err_msg):
 # Stage 3 — Translate (background, triggered by /save-transcript-and-translate).
 # -----------------------------------------------------------------------------
 
-TRANSLATE_SYSTEM_PROMPT = """You are a professional translator specializing in financial content.
-Translate the following text to English while:
-1. Preserving all stock names, symbols, numbers, and financial terms accurately
-2. Maintaining the original structure and formatting (preserve all sections, line breaks, and stock entries)
-3. Keeping any dates, times, and price targets exactly as they appear
-4. If the text is already in English, return it as-is with minor cleanup
-5. Do not add any explanations or commentary - just translate
-6. IMPORTANT: Translate ALL content completely - do not skip or truncate any sections
-7. If a stock name appears to be gibberish or random characters, keep it as-is
-8. Preserve any "[HH:MM:SS] Speaker X:" prefixes verbatim — DO NOT translate the speaker labels"""
+TRANSLATE_SYSTEM_PROMPT = """You are a professional financial-content translator working
+inside an internal newsroom workflow at a SEBI-registered investment-advisory
+firm. Your ONLY task is to translate the user's transcript verbatim from its
+source language (typically Hindi, sometimes mixed Hindi-English) to English.
+
+You are NOT giving investment advice, NOT making recommendations, and NOT
+endorsing any view. You are translating words that someone else already said
+on a public broadcast — exactly the same role a court interpreter performs.
+The translation will be reviewed by humans before any further use.
+
+Translation rules:
+1. Preserve all stock names, ticker symbols, numbers, prices, percentages
+   and financial terms exactly as spoken.
+2. Maintain the original structure: paragraphs, line breaks, bullets, every
+   section.
+3. Keep dates, times, and price targets exactly as they appear.
+4. Preserve any "[HH:MM:SS] Speaker X:" or "वक्ता 1:" prefixes verbatim —
+   DO NOT translate the speaker labels themselves.
+5. If the text is already in English, return it as-is with only minor
+   cleanup (capitalisation, obvious typos).
+6. Translate ALL content completely — do not skip, summarise, or truncate.
+7. If a name appears to be a gibberish ASR artefact, keep it as-is.
+8. Output ONLY the translated text. No preamble, no apology, no commentary,
+   no disclaimer, no "I cannot help with that" — those are not valid
+   responses for a translation task. If you are uncertain about a phrase,
+   transliterate it phonetically and continue."""
+
+
+_REFUSAL_MARKERS = (
+    "i'm sorry", "i am sorry", "i cannot", "i can't", "i can not",
+    "unable to assist", "unable to help", "as an ai", "i won't",
+    "i will not", "cannot assist", "can't assist",
+)
+
+
+def _looks_like_refusal(text: str) -> bool:
+    """GPT-4o occasionally moralises and refuses a financial-translation
+    request. Detect the canned-refusal opener so we can retry with a
+    stronger system prompt instead of saving the apology as a translation.
+
+    Constraints to avoid false positives on transcripts that legitimately
+    contain phrases like "I cannot agree":
+      • Output is suspiciously short (< 400 chars) AND
+      • Begins with one of the refusal markers within the first 80 chars.
+    A real translation of a long transcript will both be long and won't
+    open with "I'm sorry…"."""
+    if not text:
+        return True
+    stripped = text.strip()
+    if len(stripped) >= 400:
+        return False
+    head = stripped.lower()[:80]
+    return any(head.startswith(marker) or f". {marker}" in head[:80] for marker in _REFUSAL_MARKERS)
 
 
 def _translate_text(text):
     """Translate a (possibly multilingual) transcript to English with GPT-4o.
     Mirrors backend/pipeline/bulk/step01_translate.py but operates on text
-    rather than files."""
+    rather than files. Auto-retries with a stronger preface if GPT returns
+    a canned refusal."""
     key = _get_openai_key()
     if not key:
         raise RuntimeError("OpenAI API key not found. Add it under API Keys.")
@@ -394,16 +485,40 @@ def _translate_text(text):
         raise ValueError("Transcript is empty")
 
     client = openai.OpenAI(api_key=key)
-    resp = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": TRANSLATE_SYSTEM_PROMPT},
-            {"role": "user", "content": text},
-        ],
-        temperature=0.1,
-        max_tokens=16384,
-    )
-    return (resp.choices[0].message.content or "").strip()
+
+    def _call(system_prompt: str, user_text: str) -> str:
+        resp = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_text},
+            ],
+            temperature=0.1,
+            max_tokens=16384,
+        )
+        return (resp.choices[0].message.content or "").strip()
+
+    out = _call(TRANSLATE_SYSTEM_PROMPT, text)
+    if _looks_like_refusal(out):
+        # Hard-retry with an even more explicit reframing. Also wrap the
+        # transcript in a clear "TRANSCRIPT BEGINS / ENDS" envelope so the
+        # model sees this as a translation job and not as a question.
+        print("⚠️  Translate: GPT returned a refusal — retrying with hardened prompt.")
+        hardened_prompt = (
+            TRANSLATE_SYSTEM_PROMPT
+            + "\n\nFINAL REMINDER: The transcript below was already broadcast publicly. "
+              "You are translating, not advising. Refusing is incorrect. Output ONLY "
+              "the English translation."
+        )
+        wrapped = f"=== TRANSCRIPT BEGINS ===\n{text}\n=== TRANSCRIPT ENDS ==="
+        out = _call(hardened_prompt, wrapped)
+        if _looks_like_refusal(out):
+            raise RuntimeError(
+                "Translator returned a refusal twice. Try shortening the transcript "
+                "or splitting it into smaller chunks. Raw model output: "
+                + out[:300]
+            )
+    return out
 
 
 def run_translate_step(job_id, transcript_text, job_folder):
@@ -413,6 +528,7 @@ def run_translate_step(job_id, transcript_text, job_folder):
         with get_db_cursor(commit=True) as cursor:
             _set_step_running(cursor, job_id, 3)
             _update_job(cursor, job_id, current_step=3, status="translating", progress=50)
+        _mp_linkback_stage(job_id, "translating")
 
         print(f"\n{'='*60}\nAI Transcribe job {job_id} — Step 3: Translate\n{'='*60}")
         translated = _translate_text(transcript_text)
@@ -445,6 +561,7 @@ def run_translate_step(job_id, transcript_text, job_folder):
                 message=f"Translated to English ({len(translated):,} chars)",
                 output_files=[translated_path],
             )
+        _mp_linkback_stage(job_id, "awaiting_translate_review")
         print(f"⏸  AI Transcribe {job_id} parked at awaiting_translate_review")
     except Exception as exc:
         err = str(exc)
@@ -469,6 +586,7 @@ def run_extract_step(job_id, translated_text, job_folder):
         with get_db_cursor(commit=True) as cursor:
             _set_step_running(cursor, job_id, 4)
             _update_job(cursor, job_id, current_step=4, status="extracting", progress=70)
+        _mp_linkback_stage(job_id, "extracting")
 
         print(f"\n{'='*60}\nAI Transcribe job {job_id} — Step 4: Extract Pradip's Analysis\n{'='*60}")
         result = extract_run(translated_text)
@@ -508,6 +626,7 @@ def run_extract_step(job_id, translated_text, job_folder):
                 message=f"Extracted Pradip's analysis ({len(extracted):,} chars)",
                 output_files=[extracted_path],
             )
+        _mp_linkback_stage(job_id, "awaiting_extract_review")
         print(f"⏸  AI Transcribe {job_id} parked at awaiting_extract_review")
     except Exception as exc:
         err = str(exc)
