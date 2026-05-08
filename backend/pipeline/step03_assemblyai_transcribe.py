@@ -26,7 +26,7 @@ def transcribe_audio(job_id, audio_path, assemblyai_api_key, language_code="hi")
     # while maintaining good accuracy for speaker diarization
     config = aai.TranscriptionConfig(
         speaker_labels=True,
-        speech_models=["nano"],
+        speech_models=["universal-2"],
         language_code=language_code,
         punctuate=True,
         format_text=True,
