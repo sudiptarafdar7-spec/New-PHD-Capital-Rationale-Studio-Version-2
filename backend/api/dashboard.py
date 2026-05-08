@@ -1,8 +1,30 @@
 from flask import jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
+from datetime import timezone
 from backend.utils.database import get_db_cursor
 from backend.api import dashboard_bp
 from backend.models.user import User
+
+
+def _utc_iso(dt):
+    """Serialize a datetime → ISO-8601 string with explicit UTC offset (+00:00).
+
+    The DB columns are plain TIMESTAMP (no timezone).  Psycopg2 therefore
+    returns *naive* Python datetimes.  Calling `.isoformat()` on a naive
+    datetime produces a string with no TZ suffix (e.g. "2026-05-08T05:51:00").
+    Browsers treat that as *local* time, so a user whose browser is in IST
+    (+05:30) sees the raw UTC value displayed as IST — 5 h 30 min too early.
+
+    Appending +00:00 tells every browser/JS runtime "this is UTC; convert as
+    needed".  The frontend already passes all timestamps through
+    `Intl.DateTimeFormat` with `timeZone: 'Asia/Kolkata'`, so the result is
+    always correct IST regardless of which timezone the server runs in.
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.isoformat()
 
 
 def _ensure_search_history_table():
@@ -197,8 +219,8 @@ def get_dashboard_data():
                     'platform': (job.get('platform') or 'youtube').lower(),
                     'date': job['date'].isoformat() if job.get('date') else None,
                     'time': str(job['time'])[:5] if job.get('time') else None,
-                    'created_at': job['created_at'].isoformat() if job['created_at'] else None,
-                    'updated_at': job['updated_at'].isoformat() if job['updated_at'] else None,
+                    'created_at': _utc_iso(job['created_at']),
+                    'updated_at': _utc_iso(job['updated_at']),
                     'progress': progress,
                     'creator_name': job.get('creator_name', 'Unknown'),
                     'user_id': job.get('user_id')
@@ -292,7 +314,7 @@ def get_search_history():
             'history': [
                 {
                     'query': r['query'],
-                    'last_used': r['last_used'].isoformat() if r.get('last_used') else None,
+                    'last_used': _utc_iso(r.get('last_used')),
                 }
                 for r in rows
             ]
