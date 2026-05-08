@@ -9,34 +9,10 @@ import re
 from backend.utils.database import get_db_cursor
 
 
-def normalize_youtube_url(url: str) -> str:
-    """
-    Converts any YouTube URL (live/shorts/embed/etc) into 
-    the standard watch?v=VIDEOID format.
-    
-    Args:
-        url: Any YouTube URL format
-    
-    Returns:
-        str: Normalized URL in watch?v=VIDEOID format
-    """
-    # Patterns to extract video ID
-    patterns = [
-        r"youtube\.com/live/([a-zA-Z0-9_-]{6,})",
-        r"youtube\.com/embed/([a-zA-Z0-9_-]{6,})",
-        r"youtube\.com/shorts/([a-zA-Z0-9_-]{6,})",
-        r"youtu\.be/([a-zA-Z0-9_-]{6,})",
-        r"[?&]v=([a-zA-Z0-9_-]{6,})"
-    ]
-
-    for pattern in patterns:
-        match = re.search(pattern, url)
-        if match:
-            video_id = match.group(1)
-            return f"https://www.youtube.com/watch?v={video_id}"
-
-    # If no match → return original
-    return url
+# Re-export shared normaliser so existing callers `from
+# backend.pipeline.step02_download_captions import normalize_youtube_url`
+# keep working. The single source of truth lives in `backend.utils.youtube`.
+from backend.utils.youtube import normalize_youtube_url  # noqa: F401
 
 
 def download_captions(job_id, youtube_url, cookies_file=None):

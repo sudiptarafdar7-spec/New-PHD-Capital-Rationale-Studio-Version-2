@@ -94,6 +94,12 @@ def fetch_metadata():
         if not url:
             return jsonify({"error": "youtubeUrl is required"}), 400
 
+        # Normalise /live/, /shorts/, etc. → canonical watch?v=<id>
+        # before metadata lookup; the upstream extractor 404s on the
+        # /live/ form for finished streams.
+        from backend.utils.youtube import normalize_youtube_url
+        url = normalize_youtube_url(url)
+
         from backend.pipeline.fetch_video_data import fetch_video_metadata
         meta = fetch_video_metadata(url)
 
@@ -161,6 +167,11 @@ def create_job():
             youtube_url = (body.get("youtube_url") or "").strip()
             if not youtube_url:
                 return jsonify({"error": "youtube_url or audio file is required"}), 400
+            # Convert /live/, /shorts/, /embed/, youtu.be/ → canonical
+            # watch?v=<id> so both yt-dlp and the RapidAPI fallback see
+            # a URL shape they can actually download.
+            from backend.utils.youtube import normalize_youtube_url
+            youtube_url = normalize_youtube_url(youtube_url)
             source = {"youtube_url": youtube_url}
             language_code = (body.get("language_code") or language_code).strip()
             title = (body.get("title") or "").strip() or None

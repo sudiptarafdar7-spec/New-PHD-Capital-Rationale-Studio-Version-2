@@ -277,6 +277,13 @@ def create_job():
         if not video_url:
             return jsonify({'error': 'YouTube video URL is required'}), 400
 
+        # Convert /live/, /shorts/, /embed/, youtu.be/ → canonical
+        # watch?v=<id> so the stored DB row, the embedded player iframe,
+        # and the downstream Vosk audio download all use the same shape
+        # that yt-dlp + RapidAPI know how to handle.
+        from backend.utils.youtube import normalize_youtube_url
+        video_url = normalize_youtube_url(video_url)
+
         with get_db_cursor(commit=True) as cursor:
             cursor.execute(
                 "SELECT channel_name, platform FROM channels WHERE id = %s",

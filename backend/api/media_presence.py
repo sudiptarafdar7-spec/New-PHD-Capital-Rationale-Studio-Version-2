@@ -351,6 +351,15 @@ def create_entry():
     if data["rationale_tool"] == "media_rationale" and not data.get("video_url"):
         return jsonify({"error": "video_url is required when rationale_tool is media_rationale"}), 400
 
+    # Normalise /live/, /shorts/, /embed/, youtu.be/ → canonical
+    # watch?v=<id> shape so every downstream tool (AI Transcribe, Voice
+    # Typing Vosk re-run, Bulk media download via yt-dlp / RapidAPI)
+    # sees a URL they can actually fetch. Live-stream URLs in
+    # particular were silently failing both downloaders.
+    if data.get("video_url"):
+        from backend.utils.youtube import normalize_youtube_url
+        data["video_url"] = normalize_youtube_url(data["video_url"].strip())
+
     entry = MediaPresence.create(data, created_by=user_id)
     return jsonify({"success": True, "item": entry}), 201
 

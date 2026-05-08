@@ -11,6 +11,7 @@ from urllib.parse import quote
 from yt_dlp import YoutubeDL
 from backend.pipeline.fetch_video_data import extract_video_id
 from backend.utils.database import get_db_cursor
+from backend.utils.youtube import normalize_youtube_url
 
 
 def _get_rapidapi_key():
@@ -284,7 +285,17 @@ def download_audio(job_id, youtube_url, cookies_file=None):
     print("\n" + "="*60)
     print("🎧 YOUTUBE AUDIO DOWNLOADER — yt-dlp PRIMARY, RapidAPI FALLBACK")
     print("="*60)
-    print(f"📹 Video URL: {youtube_url}")
+    print(f"📹 Video URL (input): {youtube_url}")
+
+    # Normalise /live/, /shorts/, /embed/, youtu.be/ → canonical
+    # watch?v=<id> form. Both the RapidAPI youtube-mp310 endpoint and
+    # several yt-dlp client backends reject the /live/ form on completed
+    # streams (the page 302s server-side and the API extractor returns
+    # nothing). One conversion at the entry point fixes every caller —
+    # Voice Typing, AI Transcribe, Media Presence Vosk re-runs, and
+    # Bulk Rationale media downloads all funnel through here.
+    youtube_url = normalize_youtube_url(youtube_url)
+    print(f"📹 Video URL (normalised): {youtube_url}")
 
     # Setup paths
     audio_folder = os.path.join("backend", "job_files", job_id, "audio")
