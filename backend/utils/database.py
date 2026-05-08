@@ -148,7 +148,7 @@ def init_database():
                 duration VARCHAR(20),
                 user_id VARCHAR(50) REFERENCES users(id),
                 tool_used VARCHAR(50) NOT NULL,
-                status VARCHAR(30) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'recording', 'awaiting_review', 'arranging', 'awaiting_arrange_review', 'bulk_started', 'awaiting_step8_review', 'awaiting_csv_review', 'awaiting_step4_review', 'awaiting_chart_upload', 'pdf_ready', 'completed', 'failed', 'signed')),
+                status VARCHAR(30) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'recording', 'live', 'awaiting_review', 'translating', 'awaiting_translate_review', 'arranging', 'awaiting_arrange_review', 'extracting', 'awaiting_extract_review', 'bulk_started', 'awaiting_step8_review', 'awaiting_csv_review', 'awaiting_step4_review', 'awaiting_chart_upload', 'pdf_ready', 'completed', 'failed', 'signed')),
                 progress INTEGER DEFAULT 0,
                 current_step INTEGER DEFAULT 0,
                 folder_path TEXT,
@@ -218,6 +218,29 @@ def init_database():
                     ALTER TABLE jobs DROP CONSTRAINT jobs_status_check;
                     ALTER TABLE jobs ADD CONSTRAINT jobs_status_check
                         CHECK (status IN ('pending', 'processing', 'recording', 'live', 'awaiting_review', 'arranging', 'awaiting_arrange_review', 'extracting', 'awaiting_extract_review', 'bulk_started', 'awaiting_step8_review', 'awaiting_csv_review', 'awaiting_step4_review', 'awaiting_chart_upload', 'pdf_ready', 'completed', 'failed', 'signed'));
+                END IF;
+            END $$;
+        """)
+
+        # Add 'translating' and 'awaiting_translate_review' for the Voice
+        # Typing 5-step pipeline (Transcribe → Review → Translate → Review
+        # → Arrange → Review → Send-to-Bulk) and AI Transcribe's translate
+        # stage. Without this the worker hits:
+        #   "new row for relation 'jobs' violates check constraint
+        #    'jobs_status_check'" the moment we transition into the
+        # translate stage on a fresh / older VPS DB.
+        cursor.execute("""
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'jobs_status_check'
+                    AND contype = 'c'
+                    AND NOT pg_get_constraintdef(oid) LIKE '%''translating''%'
+                ) THEN
+                    ALTER TABLE jobs DROP CONSTRAINT jobs_status_check;
+                    ALTER TABLE jobs ADD CONSTRAINT jobs_status_check
+                        CHECK (status IN ('pending', 'processing', 'recording', 'live', 'awaiting_review', 'translating', 'awaiting_translate_review', 'arranging', 'awaiting_arrange_review', 'extracting', 'awaiting_extract_review', 'bulk_started', 'awaiting_step8_review', 'awaiting_csv_review', 'awaiting_step4_review', 'awaiting_chart_upload', 'pdf_ready', 'completed', 'failed', 'signed'));
                 END IF;
             END $$;
         """)
