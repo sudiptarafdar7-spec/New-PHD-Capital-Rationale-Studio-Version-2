@@ -1020,10 +1020,10 @@ export default function VoiceTypingPage({ onNavigate, mediaId, voiceJobId }: Pro
                     "video card showing dashboard" bug. */}
                 {effectiveVideoUrl ? (() => {
                   const embedSrc = ytEmbedUrl(effectiveVideoUrl, wantAutoplay);
-                  const containerCls = 'w-full aspect-video bg-black rounded-lg overflow-hidden';
+                  const containerCls = 'w-full bg-black rounded-lg overflow-hidden';
                   if (embedSrc) {
                     return (
-                      <div className={containerCls}>
+                      <div className={containerCls} style={{ height: 500 }}>
                         <iframe
                           key={embedSrc}
                           src={embedSrc}
@@ -1036,7 +1036,7 @@ export default function VoiceTypingPage({ onNavigate, mediaId, voiceJobId }: Pro
                     );
                   }
                   return (
-                    <div className={`${containerCls} bg-slate-900 flex flex-col items-center justify-center gap-3 p-6 text-center`}>
+                    <div className={`${containerCls} bg-slate-900 flex flex-col items-center justify-center gap-3 p-6 text-center`} style={{ height: 500 }}>
                       <AlertTriangle className="w-8 h-8 text-amber-400" />
                       <div className="text-sm text-muted-foreground max-w-md">
                         This video can't be embedded inline (only YouTube videos can be played here). Open it in a new tab to watch while you transcribe.
